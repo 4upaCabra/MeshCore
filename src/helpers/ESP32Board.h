@@ -221,26 +221,33 @@ public:
 #define ESP32_RTC_TIME_SET_MAGIC 0x54494d45u   // "TIME"
 extern uint32_t esp32_rtc_time_set_marker;
 
+static RTC_NOINIT_ATTR uint32_t _rtc_backup_time;
+static RTC_NOINIT_ATTR uint32_t _rtc_backup_magic;
+#define RTC_BACKUP_MAGIC  0xAA55CC33
+#define RTC_TIME_MIN      1772323200  // 1 Mar 2026
+
 class ESP32RTCClock : public mesh::RTCClock {
   bool time_was_set = false;
 public:
   ESP32RTCClock() { }
   void begin() {
     esp_reset_reason_t reason = esp_reset_reason();
-    if (reason == ESP_RST_POWERON) {
-      esp32_rtc_time_set_marker = 0;
-      // start with some date/time in the recent past
-      struct timeval tv;
-      tv.tv_sec = 1715770351;  // 15 May 2024, 8:50pm
+    if (reason == ESP_RST_DEEPSLEEP) {
+      return;  // ESP-IDF preserves system time across deep sleep
+    }
+    struct timeval tv;
+    if (_rtc_backup_magic == RTC_BACKUP_MAGIC && _rtc_backup_time > RTC_TIME_MIN) {
+      tv.tv_sec = _rtc_backup_time;
+      time_was_set = (esp32_rtc_time_set_marker == ESP32_RTC_TIME_SET_MAGIC);
+    } else {
+      if (reason == ESP_RST_POWERON) {
+        esp32_rtc_time_set_marker = 0;
+      }
+      tv.tv_sec = 1772323200;  // 1 Mar 2026
+      time_was_set = (esp32_rtc_time_set_marker == ESP32_RTC_TIME_SET_MAGIC);
+    }
     tv.tv_usec = 0;
     settimeofday(&tv, NULL);
-  } else {
-      // Anything other than a cold boot keeps the RTC domain alive, so the
-      // time carried over from before the reset is as good as it was then:
-      // reliable only if it had been set by then (not after a reboot or a
-      // flash that came before any sync).
-      time_was_set = esp32_rtc_time_set_marker == ESP32_RTC_TIME_SET_MAGIC;
-  }
   }
 
   // The placeholder date above is inside any sane validity range, so callers
@@ -258,6 +265,16 @@ public:
     settimeofday(&tv, NULL);
     time_was_set = true;
     esp32_rtc_time_set_marker = ESP32_RTC_TIME_SET_MAGIC;
+    _rtc_backup_time = time;
+    _rtc_backup_magic = RTC_BACKUP_MAGIC;
+  }
+  void tick() override {
+    time_t now;
+    time(&now);
+    if (now > RTC_TIME_MIN && (uint32_t)now != _rtc_backup_time) {
+      _rtc_backup_time = (uint32_t)now;
+      _rtc_backup_magic = RTC_BACKUP_MAGIC;
+    }
   }
 };
 
