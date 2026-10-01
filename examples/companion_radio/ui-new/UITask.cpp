@@ -156,34 +156,46 @@ class HomeScreen : public UIScreen {
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N               = 12;
+  static const int SETTINGS_N               = 16;
   static const int SETTINGS_COMMS_IDX       = 3;
   static const int SETTINGS_PM_IDX          = 4;
   static const int SETTINGS_DIM_IDX         = 5;
   static const int SETTINGS_C2L_CH_IDX      = 6;
   static const int SETTINGS_C2L_DM_IDX      = 7;
-  static const int SETTINGS_ROT_IDX         = 8;
-  static const int SETTINGS_UNREAD_IDX      = 9;
-  static const int SETTINGS_LOG_IDX         = 10;
-  static const int SETTINGS_BACK_IDX        = 11;
+  static const int SETTINGS_MCOTXT_IDX      = 8;
+  static const int SETTINGS_MCMP_IDX        = 9;
+  static const int SETTINGS_AEIC_IDX        = 10;
+  static const int SETTINGS_MCOIMG_IDX      = 11;
+  static const int SETTINGS_ROT_IDX         = 12;
+  static const int SETTINGS_UNREAD_IDX      = 13;
+  static const int SETTINGS_LOG_IDX         = 14;
+  static const int SETTINGS_BACK_IDX        = 15;
 #elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N               = 11;
+  static const int SETTINGS_N               = 15;
   static const int SETTINGS_PM_IDX          = 3;
   static const int SETTINGS_DIM_IDX         = 4;
   static const int SETTINGS_C2L_CH_IDX      = 5;
   static const int SETTINGS_C2L_DM_IDX      = 6;
-  static const int SETTINGS_ROT_IDX         = 7;
-  static const int SETTINGS_UNREAD_IDX      = 8;
-  static const int SETTINGS_LOG_IDX         = 9;
-  static const int SETTINGS_BACK_IDX        = 10;
+  static const int SETTINGS_MCOTXT_IDX      = 7;
+  static const int SETTINGS_MCMP_IDX        = 8;
+  static const int SETTINGS_AEIC_IDX        = 9;
+  static const int SETTINGS_MCOIMG_IDX      = 10;
+  static const int SETTINGS_ROT_IDX         = 11;
+  static const int SETTINGS_UNREAD_IDX      = 12;
+  static const int SETTINGS_LOG_IDX         = 13;
+  static const int SETTINGS_BACK_IDX        = 14;
 #else
-  static const int SETTINGS_N               = 6;
+  static const int SETTINGS_N               = 10;
   static const int SETTINGS_PM_IDX          = 0;
   static const int SETTINGS_DIM_IDX         = 1;
-  static const int SETTINGS_ROT_IDX         = 2;
-  static const int SETTINGS_UNREAD_IDX      = 3;
-  static const int SETTINGS_LOG_IDX         = 4;
-  static const int SETTINGS_BACK_IDX        = 5;
+  static const int SETTINGS_MCOTXT_IDX      = 2;
+  static const int SETTINGS_MCMP_IDX        = 3;
+  static const int SETTINGS_AEIC_IDX        = 4;
+  static const int SETTINGS_MCOIMG_IDX      = 5;
+  static const int SETTINGS_ROT_IDX         = 6;
+  static const int SETTINGS_UNREAD_IDX      = 7;
+  static const int SETTINGS_LOG_IDX         = 8;
+  static const int SETTINGS_BACK_IDX        = 9;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -869,6 +881,10 @@ public:
           else if (i == SETTINGS_C2L_CH_IDX) lbl = "Cyr2Lat Chan";
           else if (i == SETTINGS_C2L_DM_IDX) lbl = "Cyr2Lat DM";
 #endif
+          else if (i == SETTINGS_MCOTXT_IDX) lbl = "MCOtxt";
+          else if (i == SETTINGS_MCMP_IDX)   lbl = "MCMP detect";
+          else if (i == SETTINGS_AEIC_IDX)   lbl = "AEIC detect";
+          else if (i == SETTINGS_MCOIMG_IDX) lbl = "MCOimg detect";
           else if (i == SETTINGS_ROT_IDX)      lbl = "Rotation";
           else if (i == SETTINGS_UNREAD_IDX)  lbl = "Max Unread";
           else if (i == SETTINGS_LOG_IDX)     lbl = "Max Log";
@@ -910,6 +926,14 @@ public:
             } else if (i == SETTINGS_C2L_DM_IDX) {
               snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatContactsEnabled() ? "On" : "Off");
 #endif
+            } else if (i == SETTINGS_MCOTXT_IDX) {
+              snprintf(val, sizeof(val), "%s", the_mesh.isMCOtxtEnabled() ? "On" : "Off");
+            } else if (i == SETTINGS_MCMP_IDX) {
+              snprintf(val, sizeof(val), "%s", the_mesh.isMCMPDetectEnabled() ? "On" : "Off");
+            } else if (i == SETTINGS_AEIC_IDX) {
+              snprintf(val, sizeof(val), "%s", the_mesh.isAEICDetectEnabled() ? "On" : "Off");
+            } else if (i == SETTINGS_MCOIMG_IDX) {
+              snprintf(val, sizeof(val), "%s", the_mesh.isMCOimgDetectEnabled() ? "On" : "Off");
             } else if (i == SETTINGS_ROT_IDX && _node_prefs) {
               static const char* rot_vals[4] = { "0", "90", "180", "270" };
               snprintf(val, sizeof(val), "%s deg", rot_vals[constrain(_node_prefs->ui_display_rotation, 0, 3)]);
@@ -1065,6 +1089,14 @@ public:
         } else if (sel == SETTINGS_C2L_DM_IDX) {
           the_mesh.setCyr2LatContactsEnabled(!the_mesh.isCyr2LatContactsEnabled());
 #endif
+        } else if (sel == SETTINGS_MCOTXT_IDX) {
+          the_mesh.setMCOtxtEnabled(!the_mesh.isMCOtxtEnabled());
+        } else if (sel == SETTINGS_MCMP_IDX) {
+          the_mesh.setMCMPDetectEnabled(!the_mesh.isMCMPDetectEnabled());
+        } else if (sel == SETTINGS_AEIC_IDX) {
+          the_mesh.setAEICDetectEnabled(!the_mesh.isAEICDetectEnabled());
+        } else if (sel == SETTINGS_MCOIMG_IDX) {
+          the_mesh.setMCOimgDetectEnabled(!the_mesh.isMCOimgDetectEnabled());
 #ifdef WITH_COMPANION_CLI
         } else if (sel == 0) {
           int m = the_mesh.getChatMode();
