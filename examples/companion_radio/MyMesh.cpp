@@ -2,6 +2,21 @@
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
+#include <helpers/CompanionAppCapabilities.h>
+#include <helpers/MCOCompatText.h>
+#ifdef WITH_MCOTXT
+#include <helpers/mcotxt/MCOtxtParts.h>
+#include <helpers/mcotxt/MCOtxtTransport.h>
+#endif
+#ifdef WITH_MCMP_DETECT
+#include <helpers/mcmp/MCMPDetect.h>
+#endif
+#ifdef WITH_AEIC_DETECT
+#include <helpers/aeic/AEICDetect.h>
+#endif
+#ifdef WITH_MCOIMG_DETECT
+#include <helpers/mcoimg_detect/MCOImgDetect.h>
+#endif
 #ifdef WITH_COMPANION_CLI
 #include <helpers/CliReplySplitter.h>
 #endif
@@ -110,6 +125,8 @@
 #define LAZY_CONTACTS_WRITE_DELAY       5000
 #define LAZY_PREFS_WRITE_DELAY          2000
 #define APP_DRAIN_GRACE_MILLIS          3000
+
+#define FRAME_COMPAT_AEIC_NOTICE        0x01
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -287,10 +304,12 @@ bool MyMesh::Frame::isChannelMsg() const {
          buf[0] == RESP_CODE_CHANNEL_DATA_RECV;
 }
 
-void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
+void MyMesh::addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags) {
   if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
     MESH_DEBUG_PRINTLN("WARN: offline_queue is full!");
-    int pos = 0;
+    // A multi-part conversion keeps its original raw frame at queue[0] until
+    // the final part is delivered. Never evict that active source midway.
+    int pos = _app_sync_active ? 1 : 0;
     while (pos < offline_queue_len) {
       if (offline_queue[pos].isChannelMsg()) {
         for (int i = pos; i < offline_queue_len - 1; i++) { // delete oldest channel msg from queue
@@ -298,6 +317,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
         }
         MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
         offline_queue[offline_queue_len - 1].len = len;
+        offline_queue[offline_queue_len - 1].compat_flags = compat_flags;
         memcpy(offline_queue[offline_queue_len - 1].buf, frame, len);
         return;
       }
@@ -306,23 +326,18 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
     MESH_DEBUG_PRINTLN("INFO: no channel messages to remove from queue.");
   } else {
     offline_queue[offline_queue_len].len = len;
+    offline_queue[offline_queue_len].compat_flags = compat_flags;
     memcpy(offline_queue[offline_queue_len].buf, frame, len);
     offline_queue_len++;
   }
 }
 
-int MyMesh::getFromOfflineQueue(uint8_t frame[]) {
-  if (offline_queue_len > 0) {         // check offline queue
-    size_t len = offline_queue[0].len; // take from top of queue
-    memcpy(frame, offline_queue[0].buf, len);
-
-    offline_queue_len--;
-    for (int i = 0; i < offline_queue_len; i++) { // delete top item from queue
-      offline_queue[i] = offline_queue[i + 1];
-    }
-    return len;
+void MyMesh::removeOfflineQueueHead() {
+  if (offline_queue_len <= 0) return;
+  offline_queue_len--;
+  for (int i = 0; i < offline_queue_len; i++) {
+    offline_queue[i] = offline_queue[i + 1];
   }
-  return 0; // queue is empty
 }
 
 float MyMesh::getAirtimeBudgetFactor() const {
@@ -534,9 +549,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
     i += extra_len;
   }
   int tlen = strlen(text); // TODO: UTF-8 ??
-  if (i + tlen > MAX_FRAME_SIZE) {
-    tlen = MAX_FRAME_SIZE - i;
-  }
+  if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
   memcpy(&out_frame[i], text, tlen);
   i += tlen;
   addToOfflineQueue(out_frame, i);
@@ -551,7 +564,10 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   // we only want to show text messages on display, not cli data
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
   if (should_display && _ui) {
-    _ui->newMsg(path_len, from.name, text, offline_queue_len, true);
+    char display_text[MAX_TEXT_LEN];
+    const char* shown = transformCompatText(text, false, display_text, sizeof(display_text))
+                            ? display_text : text;
+    _ui->newMsg(path_len, from.name, shown, offline_queue_len, true);
     if (!_serial->isConnected()) {
       _ui->notify(UIEventType::contactMessage);
     }
@@ -694,9 +710,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   memcpy(&out_frame[i], &timestamp, 4);
   i += 4;
   int tlen = strlen(text); // TODO: UTF-8 ??
-  if (i + tlen > MAX_FRAME_SIZE) {
-    tlen = MAX_FRAME_SIZE - i;
-  }
+  if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
   memcpy(&out_frame[i], text, tlen);
   i += tlen;
   addToOfflineQueue(out_frame, i);
@@ -717,7 +731,12 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   if (getChannel(channel_idx, channel_details)) {
     channel_name = channel_details.name;
   }
-  if (_ui) _ui->newMsg(path_len, channel_name, text, offline_queue_len);
+  if (_ui) {
+    char display_text[MAX_TEXT_LEN];
+    const char* shown = transformCompatText(text, true, display_text, sizeof(display_text))
+                            ? display_text : text;
+    _ui->newMsg(path_len, channel_name, shown, offline_queue_len);
+  }
 #endif
 }
 
@@ -747,7 +766,87 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
     memcpy(&out_frame[i], data, copy_len);
     i += copy_len;
   }
-  addToOfflineQueue(out_frame, i);
+
+  uint8_t compat_flags = 0;
+#ifdef WITH_AEIC_DETECT
+  const aeic::ChunkInfo aeic_info = aeic::parseChunk(data_type, data, data_len);
+  const bool first_aeic_chunk = (aeic_info.isData() || aeic_info.isParity()) &&
+      markAEICNotice(channel_idx, aeic_info.sender_prefix, aeic_info.image_id,
+                     aeic_info.total, (uint32_t)millis());
+  if (first_aeic_chunk) compat_flags |= FRAME_COMPAT_AEIC_NOTICE;
+  const bool aeic_notice = isAEICDetectEnabled() && first_aeic_chunk;
+#endif
+
+  // Store only the original binary frame. Any compatibility text is derived
+  // later, when the connected app requests this frame and its capabilities
+  // are known.
+  addToOfflineQueue(out_frame, i, compat_flags);
+
+#ifdef DISPLAY_CLASS
+  const uint8_t hop_count = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
+  const char* channel_name = "Unknown";
+  ChannelDetails channel_details;
+  if (getChannel(channel_idx, channel_details)) channel_name = channel_details.name;
+#endif
+
+#if defined(WITH_MCMP_DETECT) && defined(DISPLAY_CLASS)
+  mcmp::Meta mcmp_meta;
+  if (isMCMPDetectEnabled() &&
+      mcmp::parseBinaryEnvelope(data_type, data, data_len, mcmp_meta)) {
+    const uint8_t version = mcmp_meta.form == mcmp::Form::Binary
+                                ? (uint8_t)(mcmp_meta.revision + 3) : 0;
+    char placeholder[96];
+    snprintf(placeholder, sizeof(placeholder), "<MCMP v%u%s message>",
+             (unsigned)version, mcmp_meta.is_signed ? " signed" : "");
+    const char* sender = mcmp_meta.has_sender ? mcmp_meta.sender : "MCMP";
+    if (_ui) {
+      char display_text[144];
+      snprintf(display_text, sizeof(display_text), "%s: %s", sender, placeholder);
+      _ui->newMsg(hop_count, channel_name, display_text, offline_queue_len);
+    }
+  }
+#endif
+
+#ifdef WITH_AEIC_DETECT
+  if (aeic_notice) {
+    char sender[32];
+    aeicSenderName(aeic_info.sender_prefix, sender, sizeof(sender));
+    char notice[64];
+    snprintf(notice, sizeof(notice), "%s: <AEIC image>", sender);
+#ifdef DISPLAY_CLASS
+    if (_ui) _ui->newMsg(hop_count, channel_name, notice, offline_queue_len);
+#endif
+  }
+#endif
+
+#if defined(WITH_MCOIMG_DETECT) && defined(DISPLAY_CLASS)
+  mcoimg_detect::Meta image_meta;
+  if (isMCOimgDetectEnabled() &&
+      mcoimg_detect::parseBinaryEnvelope(data_type, data, data_len, image_meta)) {
+    char placeholder[96];
+    snprintf(placeholder, sizeof(placeholder), "%s: <MCOimg v%u image>",
+             image_meta.sender[0] ? image_meta.sender : "MCOimg",
+             (unsigned)image_meta.version);
+    if (_ui) _ui->newMsg(hop_count, channel_name, placeholder, offline_queue_len);
+  }
+#endif
+
+#ifdef WITH_MCOTXT
+#ifdef DISPLAY_CLASS
+  if (_ui && isMCOtxtEnabled() && mcotxt::isBinaryEnvelope(data_type, data, data_len)) {
+    mcotxt::DecodedMessage message;
+    char* decoded = mcotxt::scratch();
+    const mcotxt::MessageStatus status = mcotxt::decodeBinaryEnvelope(
+        data_type, data, data_len, decoded, mcotxt::kScratchBytes, message);
+    if (status == mcotxt::MessageStatus::Ok || status == mcotxt::MessageStatus::TooLong) {
+      char display_text[MAX_TEXT_LEN];
+      snprintf(display_text, sizeof(display_text), "%s: %s",
+               message.has_sender ? message.sender : "?", decoded);
+      _ui->newMsg(hop_count, channel_name, display_text, offline_queue_len);
+    }
+  }
+#endif
+#endif
 
   if (_serial->isConnected()) {
     uint8_t frame[1];
@@ -1025,6 +1124,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.ui_max_unread_idx = 1;     // 32 unread messages
   _prefs.ui_max_log_idx = 1;        // 32 history messages
   _prefs.ui_charge_uptime_base = 0;
+  _prefs.ui_mcotxt_disabled = 0;
+  _prefs.ui_mcmp_detect_off = 0;
+  _prefs.ui_aeic_detect_off = 0;
+  _prefs.ui_mcoimg_detect_off = 0;
   _prefs.radio_fem_rxgain = 1;
   _prefs.radio_fem_txgain = 0;
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
@@ -1121,6 +1224,10 @@ void MyMesh::begin(bool has_display) {
   _prefs.ui_display_rotation = constrain(_prefs.ui_display_rotation, 0, 3);
   _prefs.ui_max_unread_idx = constrain(_prefs.ui_max_unread_idx, 0, 2);
   _prefs.ui_max_log_idx = constrain(_prefs.ui_max_log_idx, 0, 2);
+  _prefs.ui_mcotxt_disabled = constrain(_prefs.ui_mcotxt_disabled, 0, 1);
+  _prefs.ui_mcmp_detect_off = constrain(_prefs.ui_mcmp_detect_off, 0, 1);
+  _prefs.ui_aeic_detect_off = constrain(_prefs.ui_aeic_detect_off, 0, 1);
+  _prefs.ui_mcoimg_detect_off = constrain(_prefs.ui_mcoimg_detect_off, 0, 1);
   _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
   _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
 #ifdef BLE_PIN_CODE // 123456 by default
@@ -1260,6 +1367,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     char *app_name = (char *)&cmd_frame[8];
     cmd_frame[len] = 0; // make app_name null terminated
     MESH_DEBUG_PRINTLN("App %s connected", app_name);
+    _app_supports_mctxt = companion_app::hasCapability(&cmd_frame[8], len - 8, "mctxt");
+    _app_supports_mcmp = companion_app::hasCapability(&cmd_frame[8], len - 8, "mcmp");
+    _app_supports_aeic = companion_app::hasCapability(&cmd_frame[8], len - 8, "aeic") ||
+                         companion_app::appNameIsMeshCoreOpen(&cmd_frame[8], len - 8);
+    _app_supports_mcoimg = companion_app::hasCapability(&cmd_frame[8], len - 8, "mcimg");
 
     _iter_started = false; // stop any left-over ContactsIterator
     int i = 0;
@@ -1634,8 +1746,8 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
-    int out_len;
-    if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
+    const int out_len = getNextAppFrame(out_frame);
+    if (out_len > 0) {
       _serial->writeFrame(out_frame, out_len);
 #ifdef DISPLAY_CLASS
       if (_ui) _ui->msgRead(offline_queue_len);
@@ -2514,7 +2626,7 @@ void MyMesh::checkSerialInterface() {
 
 bool MyMesh::hasUndeliveredAppFrames() const {
   if (!_serial || !_serial->isConnected()) return false;
-  return _serial->hasPendingSend() || offline_queue_len > 0;
+  return _serial->hasPendingSend() || offline_queue_len > 0 || _app_sync_active;
 }
 
 bool MyMesh::deferForAppDrain(unsigned long& action_at) {
@@ -2953,6 +3065,47 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     strcpy(buf, "cyr2lat.contacts: off");
 
+#ifdef WITH_MCOTXT
+  } else if (strcmp(cmd, "get mcotxt") == 0) {
+    snprintf(buf, 512, "mcotxt: %s", isMCOtxtEnabled() ? "on" : "off");
+  } else if (strcmp(cmd, "set mcotxt on") == 0) {
+    setMCOtxtEnabled(true);
+    strcpy(buf, "mcotxt: on");
+  } else if (strcmp(cmd, "set mcotxt off") == 0) {
+    setMCOtxtEnabled(false);
+    strcpy(buf, "mcotxt: off");
+#endif
+#ifdef WITH_MCMP_DETECT
+  } else if (strcmp(cmd, "get mcmp.detect") == 0) {
+    snprintf(buf, 512, "mcmp.detect: %s", isMCMPDetectEnabled() ? "on" : "off");
+  } else if (strcmp(cmd, "set mcmp.detect on") == 0) {
+    setMCMPDetectEnabled(true);
+    strcpy(buf, "mcmp.detect: on");
+  } else if (strcmp(cmd, "set mcmp.detect off") == 0) {
+    setMCMPDetectEnabled(false);
+    strcpy(buf, "mcmp.detect: off");
+#endif
+#ifdef WITH_AEIC_DETECT
+  } else if (strcmp(cmd, "get aeic.detect") == 0) {
+    snprintf(buf, 512, "aeic.detect: %s", isAEICDetectEnabled() ? "on" : "off");
+  } else if (strcmp(cmd, "set aeic.detect on") == 0) {
+    setAEICDetectEnabled(true);
+    strcpy(buf, "aeic.detect: on");
+  } else if (strcmp(cmd, "set aeic.detect off") == 0) {
+    setAEICDetectEnabled(false);
+    strcpy(buf, "aeic.detect: off");
+#endif
+#ifdef WITH_MCOIMG_DETECT
+  } else if (strcmp(cmd, "get mcoimg.detect") == 0) {
+    snprintf(buf, 512, "mcoimg.detect: %s", isMCOimgDetectEnabled() ? "on" : "off");
+  } else if (strcmp(cmd, "set mcoimg.detect on") == 0) {
+    setMCOimgDetectEnabled(true);
+    strcpy(buf, "mcoimg.detect: on");
+  } else if (strcmp(cmd, "set mcoimg.detect off") == 0) {
+    setMCOimgDetectEnabled(false);
+    strcpy(buf, "mcoimg.detect: off");
+#endif
+
 #ifdef WITH_WIFI_SWITCHING
   } else if (strcmp(cmd, "wifi list") == 0) {
     if (_wifi_prefs.network_count == 0) {
@@ -3160,6 +3313,387 @@ void MyMesh::setCyr2LatContactsEnabled(bool enabled) {
   _cyr2lat_contacts_enabled = enabled;
   _prefs.cyr2lat_contacts = enabled ? 1 : 0;
   dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+}
+
+static size_t compatSenderPrefixLength(const char* text, bool has_name) {
+  if (!has_name) return 0;
+  const char* separator = strstr(text, ": ");
+  return separator == nullptr || separator == text ? 0 : (size_t)(separator + 2 - text);
+}
+
+static mco_compat::Result transformCompatPayload(
+    const char* text, bool has_name, char* output, size_t output_size,
+    const mco_compat::Options& options) {
+  mco_compat::Result result = { false, false, 0 };
+  if (!text || !output || output_size == 0) return result;
+  const size_t prefix_length = compatSenderPrefixLength(text, has_name);
+  if (prefix_length >= output_size) {
+    memcpy(output, text, output_size - 1);
+    output[output_size - 1] = '\0';
+    result.truncated = true;
+    result.length = output_size - 1;
+    return result;
+  }
+  if (prefix_length != 0) memcpy(output, text, prefix_length);
+  const mco_compat::Result body = mco_compat::transform(
+      text + prefix_length, output + prefix_length,
+      output_size - prefix_length, options);
+  result = body;
+  result.length += prefix_length;
+  return result;
+}
+
+bool MyMesh::transformCompatText(const char* text, bool has_name, char* output,
+                                 size_t output_size) {
+  mco_compat::Options options = { false, false, false };
+#ifdef WITH_MCOTXT
+  options.mcotxt = isMCOtxtEnabled();
+#endif
+#ifdef WITH_MCMP_DETECT
+  options.mcmp = isMCMPDetectEnabled();
+#endif
+#ifdef WITH_MCOIMG_DETECT
+  options.mcoimg = isMCOimgDetectEnabled();
+#endif
+  return transformCompatPayload(text, has_name, output, output_size, options).changed;
+}
+
+struct CompatTextFrameLayout {
+  size_t header_length;
+  bool has_sender_name;
+};
+
+static bool compatTextFrameLayout(const uint8_t* frame, size_t length,
+                                  CompatTextFrameLayout& layout) {
+  if (frame == nullptr || length == 0) return false;
+  size_t text_type_position = 0;
+  switch (frame[0]) {
+    case RESP_CODE_CONTACT_MSG_RECV:
+      if (length < 13) return false;
+      text_type_position = 8;
+      layout = { 13, false };
+      break;
+    case RESP_CODE_CONTACT_MSG_RECV_V3:
+      if (length < 16) return false;
+      text_type_position = 11;
+      layout = { 16, false };
+      break;
+    case RESP_CODE_CHANNEL_MSG_RECV:
+      if (length < 8) return false;
+      text_type_position = 3;
+      layout = { 8, true };
+      break;
+    case RESP_CODE_CHANNEL_MSG_RECV_V3:
+      if (length < 11) return false;
+      text_type_position = 6;
+      layout = { 11, true };
+      break;
+    default:
+      return false;
+  }
+
+  const uint8_t text_type = frame[text_type_position];
+  if (text_type != TXT_TYPE_PLAIN && text_type != TXT_TYPE_SIGNED_PLAIN) return false;
+  if (!layout.has_sender_name && text_type == TXT_TYPE_SIGNED_PLAIN)
+    layout.header_length += 4;  // sender key prefix appended by queueMessage()
+  return layout.header_length <= length;
+}
+
+static int formatCompatPart(const uint8_t* header, size_t header_length,
+                            const char* prefix, size_t prefix_length,
+                            const char* text, size_t text_length,
+                            size_t part_index, size_t& part_count,
+                            uint8_t output[]) {
+  part_count = 0;
+  if (header == nullptr || text == nullptr || output == nullptr ||
+      header_length >= MAX_FRAME_SIZE) return 0;
+  size_t max_bytes = MAX_FRAME_SIZE - header_length;
+  if (max_bytes > MAX_TEXT_LEN) max_bytes = MAX_TEXT_LEN;
+
+#ifdef WITH_MCOTXT
+  mcotxt::TextPart parts[mcotxt::kMaxParts];
+  part_count = mcotxt::splitForApp(text, text_length, max_bytes,
+                                   prefix_length, parts, mcotxt::kMaxParts);
+  if (part_count == 0 || part_index >= part_count) return 0;
+  memcpy(output, header, header_length);
+  const size_t length = mcotxt::formatPart(
+      prefix, prefix_length, text, parts[part_index], part_index, part_count,
+      (char*)output + header_length, MAX_FRAME_SIZE + 1 - header_length);
+  return length == 0 || length > max_bytes ? 0 : (int)(header_length + length);
+#else
+  if (part_index != 0 || prefix_length + text_length > max_bytes) return 0;
+  memcpy(output, header, header_length);
+  if (prefix_length != 0) memcpy(output + header_length, prefix, prefix_length);
+  memcpy(output + header_length + prefix_length, text, text_length);
+  part_count = 1;
+  return (int)(header_length + prefix_length + text_length);
+#endif
+}
+
+int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
+                                  size_t& part_count, bool& additive,
+                                  uint8_t output[]) {
+  part_count = 0;
+  additive = false;
+
+  CompatTextFrameLayout layout;
+  if (compatTextFrameLayout(source.buf, source.len, layout)) {
+    char original[MAX_FRAME_SIZE + 1];
+    const size_t original_length = source.len - layout.header_length;
+    memcpy(original, source.buf + layout.header_length, original_length);
+    original[original_length] = '\0';
+
+    mco_compat::Options options = { false, false, false };
+#ifdef WITH_MCOTXT
+    options.mcotxt = isMCOtxtEnabled() && !_app_supports_mctxt;
+#endif
+#ifdef WITH_MCMP_DETECT
+    options.mcmp = isMCMPDetectEnabled() && !_app_supports_mcmp;
+#endif
+#ifdef WITH_MCOIMG_DETECT
+    options.mcoimg = isMCOimgDetectEnabled() && !_app_supports_mcoimg;
+#endif
+
+#ifdef WITH_MCOTXT
+    char* transformed = mcotxt::scratch();
+    const size_t transformed_capacity = mcotxt::kScratchBytes;
+#else
+    char transformed[MAX_FRAME_SIZE + 1];
+    const size_t transformed_capacity = sizeof(transformed);
+#endif
+    const mco_compat::Result result = transformCompatPayload(
+        original, layout.has_sender_name, transformed, transformed_capacity, options);
+    if (!result.changed) return 0;
+    const size_t prefix_length = compatSenderPrefixLength(
+        transformed, layout.has_sender_name);
+    if (prefix_length > result.length) return 0;
+    return formatCompatPart(source.buf, layout.header_length,
+                            transformed, prefix_length,
+                            transformed + prefix_length,
+                            result.length - prefix_length,
+                            part_index, part_count, output);
+  }
+
+  if (source.len < 9 || source.buf[0] != RESP_CODE_CHANNEL_DATA_RECV) return 0;
+  const uint16_t data_type = (uint16_t)source.buf[6] | ((uint16_t)source.buf[7] << 8);
+  const size_t data_length = source.buf[8];
+  if (9 + data_length > source.len) return 0;
+  const uint8_t* data = source.buf + 9;
+
+  const char* body = nullptr;
+  size_t body_length = 0;
+  char prefix[40] = {};
+  size_t prefix_length = 0;
+  char placeholder[96] = {};
+  uint32_t timestamp = _app_sync_timestamp;
+
+#ifdef WITH_MCOTXT
+  mcotxt::DecodedMessage mcotxt_message;
+  char* decoded = mcotxt::scratch();
+  if (isMCOtxtEnabled() && !_app_supports_mctxt &&
+      mcotxt::isBinaryEnvelope(data_type, data, data_length)) {
+    const mcotxt::MessageStatus status = mcotxt::decodeBinaryEnvelope(
+        data_type, data, data_length, decoded, mcotxt::kScratchBytes, mcotxt_message);
+    if (status == mcotxt::MessageStatus::Ok || status == mcotxt::MessageStatus::TooLong) {
+      const int length = snprintf(prefix, sizeof(prefix), "%s: ",
+                                  mcotxt_message.has_sender ? mcotxt_message.sender : "?");
+      if (length > 0 && length < (int)sizeof(prefix)) {
+        prefix_length = (size_t)length;
+        body = decoded;
+        body_length = strlen(decoded);
+        if (mcotxt_message.has_timestamp) timestamp = mcotxt_message.timestamp;
+      }
+    }
+  }
+#endif
+
+#ifdef WITH_MCMP_DETECT
+  if (body == nullptr && isMCMPDetectEnabled() && !_app_supports_mcmp) {
+    mcmp::Meta meta;
+    if (mcmp::parseBinaryEnvelope(data_type, data, data_length, meta)) {
+      const unsigned version = (unsigned)meta.revision + 3U;
+      const int prefix_result = snprintf(prefix, sizeof(prefix), "%s: ",
+                                         meta.has_sender ? meta.sender : "MCMP");
+      const int body_result = snprintf(placeholder, sizeof(placeholder),
+                                       "<MCMP v%u%s message>", version,
+                                       meta.is_signed ? " signed" : "");
+      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix) && body_result > 0) {
+        prefix_length = (size_t)prefix_result;
+        body = placeholder;
+        body_length = (size_t)body_result;
+        if (meta.container_ok) timestamp = meta.timestamp;
+      }
+    }
+  }
+#endif
+
+#ifdef WITH_AEIC_DETECT
+  if (body == nullptr && isAEICDetectEnabled() && !_app_supports_aeic &&
+      (source.compat_flags & FRAME_COMPAT_AEIC_NOTICE) != 0) {
+    const aeic::ChunkInfo info = aeic::parseChunk(data_type, data, data_length);
+    if (info.isData() || info.isParity()) {
+      char sender[32];
+      aeicSenderName(info.sender_prefix, sender, sizeof(sender));
+      const int prefix_result = snprintf(prefix, sizeof(prefix), "%s: ", sender);
+      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix)) {
+        prefix_length = (size_t)prefix_result;
+        strcpy(placeholder, "<AEIC image>");
+        body = placeholder;
+        body_length = strlen(placeholder);
+      }
+    }
+  }
+#endif
+
+#ifdef WITH_MCOIMG_DETECT
+  if (body == nullptr && isMCOimgDetectEnabled() && !_app_supports_mcoimg) {
+    mcoimg_detect::Meta meta;
+    if (mcoimg_detect::parseBinaryEnvelope(data_type, data, data_length, meta)) {
+      const int prefix_result = snprintf(prefix, sizeof(prefix), "%s: ",
+                                         meta.sender[0] ? meta.sender : "MCOimg");
+      const int body_result = snprintf(placeholder, sizeof(placeholder),
+                                       "<MCOimg v%u image>", (unsigned)meta.version);
+      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix) && body_result > 0) {
+        prefix_length = (size_t)prefix_result;
+        body = placeholder;
+        body_length = (size_t)body_result;
+      }
+    }
+  }
+#endif
+
+  if (body == nullptr) return 0;
+  uint8_t header[16];
+  size_t header_length = 0;
+  if (app_target_ver >= 3) {
+    header[header_length++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+    header[header_length++] = source.buf[1];
+    header[header_length++] = 0;
+    header[header_length++] = 0;
+  } else {
+    header[header_length++] = RESP_CODE_CHANNEL_MSG_RECV;
+  }
+  header[header_length++] = source.buf[4];  // channel index
+  header[header_length++] = source.buf[5];  // packed path length
+  header[header_length++] = TXT_TYPE_PLAIN;
+  memcpy(header + header_length, &timestamp, sizeof(timestamp));
+  header_length += sizeof(timestamp);
+  additive = true;
+  return formatCompatPart(header, header_length, prefix, prefix_length,
+                          body, body_length, part_index, part_count, output);
+}
+
+int MyMesh::getNextAppFrame(uint8_t frame[]) {
+  while (true) {
+    if (!_app_sync_active) {
+      if (offline_queue_len <= 0) return 0;
+      _app_sync_active = true;
+      _app_sync_original_sent = false;
+      _app_sync_next_part = 0;
+      _app_sync_timestamp = (uint32_t)getRTCClock()->getCurrentTime();
+    }
+
+    const Frame& source = offline_queue[0];
+    size_t part_count = 0;
+    bool additive = false;
+    const int transformed_length = renderCompatFramePart(
+        source, _app_sync_next_part, part_count, additive, frame);
+
+    if (additive && !_app_sync_original_sent) {
+      memcpy(frame, source.buf, source.len);
+      _app_sync_original_sent = true;
+      return source.len;
+    }
+
+    if (part_count == 0 || transformed_length <= 0) {
+      if (!_app_sync_original_sent) {
+        memcpy(frame, source.buf, source.len);
+        const int length = source.len;
+        removeOfflineQueueHead();
+        _app_sync_active = false;
+        return length;
+      }
+      removeOfflineQueueHead();
+      _app_sync_active = false;
+      continue;
+    }
+
+    _app_sync_next_part++;
+    if (_app_sync_next_part >= part_count) {
+      removeOfflineQueueHead();
+      _app_sync_active = false;
+    }
+    return transformed_length;
+  }
+}
+
+void MyMesh::setMCOtxtEnabled(bool enabled) {
+#ifdef WITH_MCOTXT
+  _prefs.ui_mcotxt_disabled = enabled ? 0 : 1;
+  deferSavePrefs();
+#endif
+}
+
+void MyMesh::setMCMPDetectEnabled(bool enabled) {
+#ifdef WITH_MCMP_DETECT
+  _prefs.ui_mcmp_detect_off = enabled ? 0 : 1;
+  deferSavePrefs();
+#endif
+}
+
+#ifdef WITH_AEIC_DETECT
+bool MyMesh::markAEICNotice(uint8_t channel_idx, uint16_t sender_prefix,
+                            uint8_t image_id, uint8_t total, uint32_t now_millis) {
+  int replacement = -1;
+  for (int i = 0; i < AEIC_NOTICE_TABLE_SIZE; ++i) {
+    AEICNotice& notice = _aeic_notices[i];
+    if (!notice.used) {
+      if (replacement < 0) replacement = i;
+      continue;
+    }
+    const uint32_t age = now_millis - notice.seen_at;
+    if (notice.channel_idx == channel_idx && notice.sender_prefix == sender_prefix &&
+        notice.image_id == image_id && notice.total == total &&
+        age <= AEIC_NOTICE_TTL_MILLIS) return false;
+    if (replacement < 0 && age > AEIC_NOTICE_TTL_MILLIS) replacement = i;
+  }
+  if (replacement < 0) {
+    replacement = _next_aeic_notice;
+    _next_aeic_notice = (_next_aeic_notice + 1) % AEIC_NOTICE_TABLE_SIZE;
+  }
+  AEICNotice& notice = _aeic_notices[replacement];
+  notice = {true, channel_idx, sender_prefix, image_id, total, now_millis};
+  return true;
+}
+
+void MyMesh::aeicSenderName(uint16_t sender_prefix, char* out, size_t out_size) {
+  const uint8_t prefix[2] = {(uint8_t)(sender_prefix >> 8), (uint8_t)sender_prefix};
+  if (memcmp(self_id.pub_key, prefix, sizeof(prefix)) == 0) {
+    StrHelper::strzcpy(out, _prefs.node_name, out_size);
+    return;
+  }
+  ContactInfo* contact = lookupContactByPubKey(prefix, sizeof(prefix));
+  if (contact && contact->name[0]) {
+    StrHelper::strzcpy(out, contact->name, out_size);
+    return;
+  }
+  snprintf(out, out_size, "AEIC-%02X%02X", prefix[0], prefix[1]);
+}
+
+#endif
+
+void MyMesh::setAEICDetectEnabled(bool enabled) {
+#ifdef WITH_AEIC_DETECT
+  _prefs.ui_aeic_detect_off = enabled ? 0 : 1;
+  deferSavePrefs();
+#endif
+}
+
+void MyMesh::setMCOimgDetectEnabled(bool enabled) {
+#ifdef WITH_MCOIMG_DETECT
+  _prefs.ui_mcoimg_detect_off = enabled ? 0 : 1;
+  deferSavePrefs();
+#endif
 }
 
 #ifdef WITH_WIFI_SWITCHING
