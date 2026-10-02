@@ -1,3 +1,6 @@
+// basE91 encode/decode (canonical 91-character alphabet).
+// Algorithm by Joachim Henke, public domain (2000-2006).
+// Reference: http://base91.sourceforge.net
 #include "Base91.h"
 
 #include <string.h>

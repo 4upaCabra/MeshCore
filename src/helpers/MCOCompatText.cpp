@@ -37,14 +37,45 @@ bool startsWith(const char* text, const char* prefix) {
   return strncmp(text, prefix, strlen(prefix)) == 0;
 }
 
+// True for code points that are letters in the scripts MeshCore messages
+// actually use. Digits are handled by the ASCII path; symbols and punctuation
+// return false.
+bool isLetterCodepoint(uint32_t cp) {
+  if (cp >= 0xC0 && cp <= 0xFF) return cp != 0xD7 && cp != 0xF7;  // Latin-1
+  if (cp >= 0x100 && cp <= 0x24F) return true;                     // Latin Ext-A/B
+  if (cp >= 0x370 && cp <= 0x3FF) return true;                     // Greek
+  if (cp >= 0x400 && cp <= 0x4FF) return true;                     // Cyrillic
+  if (cp >= 0x500 && cp <= 0x52F) return true;                     // Cyrillic suppl.
+  return false;
+}
+
 bool isBoundary(const char* input, const char* position) {
   if (position == input) return true;
-  const unsigned char previous = (unsigned char)position[-1];
-  // A UTF-8 continuation byte is part of the preceding word, not a safe
-  // transport boundary. ASCII punctuation (including the closing bracket of
-  // a reply mention) and whitespace are valid boundaries.
-  if (previous >= 0x80) return false;
-  return !isalnum(previous) && previous != '_';
+  const char* prev = position - 1;
+  // Walk back over UTF-8 continuation bytes to the lead byte of the character
+  // immediately preceding the token position.
+  while (prev > input && ((unsigned char)*prev & 0xC0) == 0x80) --prev;
+  const unsigned char lead = (unsigned char)*prev;
+  if (lead < 0x80) {
+    // ASCII: punctuation and whitespace are valid boundaries; letters, digits
+    // and '_' are part of the preceding word.
+    return !isalnum(lead) && lead != '_';
+  }
+  // Decode the UTF-8 code point so non-ASCII letters (Cyrillic, Greek, ...)
+  // still count as word characters while non-ASCII punctuation/whitespace
+  // remains a valid boundary.
+  uint32_t cp = 0;
+  size_t length = 0;
+  if ((lead & 0xE0) == 0xC0) { cp = lead & 0x1F; length = 2; }
+  else if ((lead & 0xF0) == 0xE0) { cp = lead & 0x0F; length = 3; }
+  else if ((lead & 0xF8) == 0xF0) { cp = lead & 0x07; length = 4; }
+  else return false;  // stray continuation/lead byte — not a boundary
+  for (size_t i = 1; i < length; ++i) {
+    const unsigned char byte = (unsigned char)prev[i];
+    if ((byte & 0xC0) != 0x80) return false;  // malformed UTF-8
+    cp = (cp << 6) | (byte & 0x3F);
+  }
+  return !isLetterCodepoint(cp);
 }
 
 Match matchAt(const char* input, const char* position, const Options& options) {

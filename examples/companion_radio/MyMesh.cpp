@@ -3461,11 +3461,10 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
     char transformed[MAX_FRAME_SIZE + 1];
     const size_t transformed_capacity = sizeof(transformed);
 #endif
+    const size_t prefix_length = compatSenderPrefixLength(original, layout.has_sender_name);
     const mco_compat::Result result = transformCompatPayload(
         original, layout.has_sender_name, transformed, transformed_capacity, options);
     if (!result.changed) return 0;
-    const size_t prefix_length = compatSenderPrefixLength(
-        transformed, layout.has_sender_name);
     if (prefix_length > result.length) return 0;
     return formatCompatPart(source.buf, layout.header_length,
                             transformed, prefix_length,
