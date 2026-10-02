@@ -25,6 +25,19 @@ std::string mctUtf8(const char* text) {
   return "mct:" + base91(container);
 }
 
+std::string mctUtf8Reply(const char* author, const char* text) {
+  const size_t author_length = strlen(author);
+  const size_t text_length = strlen(text);
+  EXPECT_LT(author_length, 128u);
+  EXPECT_LT(text_length, 128u);
+  std::vector<uint8_t> container = {0x31, 0x05, 0x01, (uint8_t)author_length};
+  container.insert(container.end(), author, author + author_length);
+  container.insert(container.end(), {0x10, 0x00, 0x00, 0x00});
+  container.insert(container.end(), {0x01, (uint8_t)text_length});
+  container.insert(container.end(), text, text + text_length);
+  return "mct:" + base91(container);
+}
+
 mco_compat::Options all() { return { true, true, true }; }
 
 }  // namespace
@@ -61,6 +74,26 @@ TEST(MCOCompatText, DecodesInlineMCOtxtWithoutRemovingSurroundingText) {
   EXPECT_FALSE(result.truncated);
   EXPECT_STREQ(output,
                "Sender: @[QRb] обычный текст, а теперь hello как тебе?");
+}
+
+TEST(MCOCompatText, AddsReplyMentionToDecodedMCOtxt) {
+  const std::string input = "Sender: " + mctUtf8Reply("Bob", "hello");
+  char output[256];
+  const mco_compat::Result result =
+      mco_compat::transform(input.c_str(), output, sizeof(output), all());
+  EXPECT_TRUE(result.changed);
+  EXPECT_FALSE(result.truncated);
+  EXPECT_STREQ(output, "Sender: @[Bob] hello");
+}
+
+TEST(MCOCompatText, KeepsExistingReplyMentionInDecodedMCOtxt) {
+  const std::string input = "Sender: " + mctUtf8Reply("Bob", "@[Bob] hello");
+  char output[256];
+  const mco_compat::Result result =
+      mco_compat::transform(input.c_str(), output, sizeof(output), all());
+  EXPECT_TRUE(result.changed);
+  EXPECT_FALSE(result.truncated);
+  EXPECT_STREQ(output, "Sender: @[Bob] hello");
 }
 
 TEST(MCOCompatText, RecognisesLegacyAndVersionedDetectorPrefixes) {

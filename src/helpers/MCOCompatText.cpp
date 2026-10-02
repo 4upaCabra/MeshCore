@@ -145,8 +145,14 @@ bool replaceToken(Kind kind, const char* begin, const char* end,
         token, output + output_length, output_capacity - output_length, message);
     if (status != mcotxt::MessageStatus::Ok && status != mcotxt::MessageStatus::TooLong)
       return false;
+    bool mention_truncated = false;
+    if (!mcotxt::ensureReplyMentionPrefix(
+            message, output + output_length, output_capacity - output_length,
+            mention_truncated)) {
+      return false;
+    }
     output_length += strlen(output + output_length);
-    truncated = status == mcotxt::MessageStatus::TooLong;
+    truncated = status == mcotxt::MessageStatus::TooLong || mention_truncated;
     return true;
   }
 #endif
