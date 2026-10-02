@@ -839,6 +839,9 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
     const mcotxt::MessageStatus status = mcotxt::decodeBinaryEnvelope(
         data_type, data, data_len, decoded, mcotxt::kScratchBytes, message);
     if (status == mcotxt::MessageStatus::Ok || status == mcotxt::MessageStatus::TooLong) {
+      bool mention_truncated = false;
+      mcotxt::ensureReplyMentionPrefix(message, decoded, mcotxt::kScratchBytes,
+                                       mention_truncated);
       char display_text[MAX_TEXT_LEN];
       snprintf(display_text, sizeof(display_text), "%s: %s",
                message.has_sender ? message.sender : "?", decoded);
@@ -3494,13 +3497,18 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
     const mcotxt::MessageStatus status = mcotxt::decodeBinaryEnvelope(
         data_type, data, data_length, decoded, mcotxt::kScratchBytes, mcotxt_message);
     if (status == mcotxt::MessageStatus::Ok || status == mcotxt::MessageStatus::TooLong) {
-      const int length = snprintf(prefix, sizeof(prefix), "%s: ",
-                                  mcotxt_message.has_sender ? mcotxt_message.sender : "?");
-      if (length > 0 && length < (int)sizeof(prefix)) {
-        prefix_length = (size_t)length;
-        body = decoded;
-        body_length = strlen(decoded);
-        if (mcotxt_message.has_timestamp) timestamp = mcotxt_message.timestamp;
+      bool mention_truncated = false;
+      if (mcotxt::ensureReplyMentionPrefix(mcotxt_message, decoded,
+                                           mcotxt::kScratchBytes,
+                                           mention_truncated)) {
+        const int length = snprintf(prefix, sizeof(prefix), "%s: ",
+                                    mcotxt_message.has_sender ? mcotxt_message.sender : "?");
+        if (length > 0 && length < (int)sizeof(prefix)) {
+          prefix_length = (size_t)length;
+          body = decoded;
+          body_length = strlen(decoded);
+          if (mcotxt_message.has_timestamp) timestamp = mcotxt_message.timestamp;
+        }
       }
     }
   }
