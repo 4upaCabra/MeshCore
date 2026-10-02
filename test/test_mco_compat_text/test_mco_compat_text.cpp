@@ -17,6 +17,28 @@ std::string base91(const std::vector<uint8_t>& bytes) {
   return std::string(encoded, length);
 }
 
+void putU32(std::vector<uint8_t>& out, uint32_t value) {
+  for (int i = 0; i < 4; i++) out.push_back((uint8_t)(value >> (8 * i)));
+}
+
+void putName(std::vector<uint8_t>& out, const char* name) {
+  const size_t length = strlen(name);
+  EXPECT_LT(length, 128u);
+  out.push_back((uint8_t)length);
+  out.insert(out.end(), name, name + length);
+}
+
+std::string mcmpV3Reply(const char* author, bool is_signed = false) {
+  std::vector<uint8_t> container;
+  container.push_back((uint8_t)(0x01 | (is_signed ? 0x02 : 0x00)));
+  putU32(container, 0x11223344);
+  if (is_signed) container.insert(container.end(), 64, 0xAA);
+  putName(container, author);
+  putU32(container, 0x10);
+  container.insert(container.end(), {'\0', '\x12', '\x34'});
+  return "mcmp3:" + base91(container);
+}
+
 std::string mctUtf8(const char* text) {
   const size_t length = strlen(text);
   EXPECT_LT(length, 128u);
@@ -62,6 +84,26 @@ TEST(MCOCompatText, ReplacesMultipleIndependentTokens) {
   EXPECT_TRUE(result.changed);
   EXPECT_STREQ(output,
       "before <MCMP v2 message> middle <MCOimg v3 image> after");
+}
+
+TEST(MCOCompatText, AddsReplyMentionToMCMPv3Placeholder) {
+  const std::string input = "Sender: " + mcmpV3Reply("Ann");
+  char output[256];
+  const mco_compat::Result result =
+      mco_compat::transform(input.c_str(), output, sizeof(output), all());
+  EXPECT_TRUE(result.changed);
+  EXPECT_FALSE(result.truncated);
+  EXPECT_STREQ(output, "Sender: @[Ann] <MCMP v3 message>");
+}
+
+TEST(MCOCompatText, DoesNotDuplicateExistingReplyMentionBeforeMCMPv3) {
+  const std::string input = "Sender: @[Ann] " + mcmpV3Reply("Ann", true);
+  char output[256];
+  const mco_compat::Result result =
+      mco_compat::transform(input.c_str(), output, sizeof(output), all());
+  EXPECT_TRUE(result.changed);
+  EXPECT_FALSE(result.truncated);
+  EXPECT_STREQ(output, "Sender: @[Ann] <MCMP v3 signed message>");
 }
 
 TEST(MCOCompatText, DecodesInlineMCOtxtWithoutRemovingSurroundingText) {
