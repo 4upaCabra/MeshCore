@@ -13,12 +13,18 @@ namespace {
 
 const size_t kMaxTextPayloadBytes = 192;
 
+// A Base91 run on its own is not an image: the alphabet holds every letter and
+// digit, so "im:hello", "im:ok" and "im:privet" decode just as happily as an
+// image body. What separates a picture from ordinary text is the container's
+// subtype in the high nibble of its first byte — the same test the binary
+// envelope below has always used. Without it any message that happens to start
+// a word with "im:" was rewritten into "<MCOimg image>" for the receiving app.
 bool hasBase91Payload(const char* encoded) {
   uint8_t payload[kMaxTextPayloadBytes];
   size_t payload_length = 0;
   return encoded[0] != '\0' &&
          mesh::base91::decode(encoded, strlen(encoded), payload, sizeof(payload), payload_length) &&
-         payload_length != 0;
+         payload_length >= 2 && (payload[0] >> 4) == kImageSubtype;
 }
 
 }  // namespace
