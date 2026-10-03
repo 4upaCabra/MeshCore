@@ -138,6 +138,11 @@ public:
   bool hasRecentAppTimeSet() const;
   const char *getTimeSourceLabel() const;
 
+  // true while a packet is being transmitted, or the radio has not yet
+  // returned to receive mode after a TX. The superloop defers blocking e-ink
+  // service() on this (see main.cpp) so the radio is not kept out of RX.
+  bool isRadioTxBusy() const { return Dispatcher::isRadioTxBusy(); }
+
 protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
