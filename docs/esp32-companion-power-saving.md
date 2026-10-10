@@ -227,6 +227,13 @@ python tools/ps_framework.py --archive <файл.tar.gz>   # то же из ло
 pio run -e Heltec_E290_companion_radio_ble_async_ps
 ```
 
+В GitHub Actions (`.github/workflows/firmware-builder.yml`) ядро ставится и
+кэшируется только для целей `*_ps`. В выпуски они пока не входят: списки
+`build.sh get-*-firmwares-to-build` отбирают окружения по суффиксам
+`_companion_radio_ble/_usb`, `_repeater`, `_room_server`, и `_ps` под них не
+попадает. Чтобы включить PS в выпуски, в эти списки добавляют суффиксы `_ps`-окружений
+нужного типа (`_companion_radio_ble_ps`, `_repeater_ps`, `_room_server_ps` и т. п.).
+
 Оба ядра живут рядом, сборки чередуются без переустановки. Подключать архив
 ссылкой прямо в `platform_packages` нельзя: PlatformIO держит один пакет на имя,
 и PS-ядро встало бы на место штатного для всех ESP32-сборок.
