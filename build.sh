@@ -206,54 +206,71 @@ build_repeater_firmwares() {
 #  build_firmware "LilyGo_T3S3_sx1262_Repeater"
 #  build_firmware "RAK_4631_Repeater"
 
-  # build all repeater firmwares
+  # build all repeater firmwares, and the _ps (ESP32 power saving) twins
   build_all_firmwares_by_suffix "_repeater"
+  build_all_firmwares_by_suffix "_repeater_ps"
 
 }
 
-build_companion_non_wifi_firmwares() {
-  shopt -s nocasematch
-  local all_envs=($(get_pio_envs))
-  local uni_bases=()
+# uni images that do not fit the 1.25 MB app partition: their boards fall back
+# to the separate ble/usb images.
+COMPANION_RELEASE_SKIP=(
+  "LilyGo_TBeam_1W_companion_radio_uni"
+  "ThinkNode_M5_companion_radio_uni"
+)
 
+# The companion images a release carries: one per board — the uni image (BLE,
+# WiFi and USB in one) where the board has it, otherwise ble and usb; the
+# asynchronous e-ink variant of either wherever there is one — plus the _ps
+# (ESP32 power saving) twin of every image that has one.
+get_companion_release_envs() {
+  local all_envs=($(get_pio_envs))
+  declare -A have=()
+  local bases=()
+  local env
   for env in "${all_envs[@]}"; do
-    if [[ "$env" == *_companion_radio_uni ]]; then
-      uni_bases+=("${env%_companion_radio_uni}")
+    have[$env]=1
+  done
+  for env in "${COMPANION_RELEASE_SKIP[@]}"; do
+    unset "have[$env]"
+  done
+  for env in "${all_envs[@]}"; do
+    if [[ "$env" =~ ^(.*)_companion_radio_(ble|usb|uni)(_async)?$ ]]; then
+      local base="${BASH_REMATCH[1]}"
+      [[ " ${bases[*]} " == *" $base "* ]] || bases+=("$base")
     fi
   done
-
-  for env in "${all_envs[@]}"; do
-    local base=""
-    if [[ "$env" == *_companion_radio_ble ]]; then
-      base="${env%_companion_radio_ble}"
-    elif [[ "$env" == *_companion_radio_usb ]]; then
-      base="${env%_companion_radio_usb}"
+  for base in "${bases[@]}"; do
+    local p="${base}_companion_radio_"
+    local picks=()
+    if [[ -n "${have[${p}uni_async]}" ]]; then
+      picks=("${p}uni_async")
+    elif [[ -n "${have[${p}uni]}" ]]; then
+      picks=("${p}uni")
     else
-      continue
+      if [[ -n "${have[${p}ble_async]}" ]]; then
+        picks+=("${p}ble_async")
+      elif [[ -n "${have[${p}ble]}" ]]; then
+        picks+=("${p}ble")
+      fi
+      if [[ -n "${have[${p}usb]}" ]]; then
+        picks+=("${p}usb")
+      fi
     fi
-
-    local skip=false
-    for uni_base in "${uni_bases[@]}"; do
-      if [[ "$base" == "$uni_base" ]]; then
-        skip=true
-        break
+    for env in "${picks[@]}"; do
+      echo "$env"
+      if [[ -n "${have[${env}_ps]}" ]]; then
+        echo "${env}_ps"
       fi
     done
-
-    if ! $skip; then
-      build_firmware "$env"
-    fi
   done
 }
 
 build_companion_firmwares() {
-
-  # ESP32 with WiFi switching
-  build_all_firmwares_by_suffix "_companion_radio_uni"
-
-  # NRF52 / RP2040 / STM32 — devices without _uni
-  build_companion_non_wifi_firmwares
-
+  local envs=($(get_companion_release_envs))
+  for env in "${envs[@]}"; do
+    build_firmware "$env"
+  done
 }
 
 build_room_server_firmwares() {
@@ -262,8 +279,9 @@ build_room_server_firmwares() {
 #  build_firmware "Heltec_v3_room_server"
 #  build_firmware "RAK_4631_room_server"
 
-  # build all room server firmwares
+  # build all room server firmwares, and the _ps (ESP32 power saving) twins
   build_all_firmwares_by_suffix "_room_server"
+  build_all_firmwares_by_suffix "_room_server_ps"
 
 }
 
@@ -317,10 +335,11 @@ elif [[ $1 == "build-room-server-firmwares" ]]; then
 elif [[ $1 == "build-kiss-radio-firmwares" ]]; then
   build_kiss_modem_firmwares
 elif [[ $1 == "get-companion-firmwares-to-build" ]]; then
-  get_pio_envs_ending_with_string "_companion_radio_usb"
-  get_pio_envs_ending_with_string "_companion_radio_ble"
+  get_companion_release_envs
 elif [[ $1 == "get-repeater-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_repeater"
+  get_pio_envs_ending_with_string "_repeater_ps"
 elif [[ $1 == "get-room-server-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_room_server"
+  get_pio_envs_ending_with_string "_room_server_ps"
 fi
