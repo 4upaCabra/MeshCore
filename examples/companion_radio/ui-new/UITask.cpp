@@ -1,6 +1,7 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
+#include "../AdcCalibration.h"
 #include "target.h"
 #include <time.h>
 #if defined(WIFI_SSID) || defined(WITH_WIFI_SWITCHING)
@@ -151,12 +152,17 @@ class HomeScreen : public UIScreen {
   int           _settings_scroll = 0;   // first visible item index
   int           _settings_visible = 4;  // updated in render(), used in handleInput()
   bool          _rot_visible = true;    // false for non-eInk displays; set in render()
-  int           _eff_settings_n = SETTINGS_N;  // effective count (may exclude Rotation)
+  bool          _adc_visible = true;    // false for boards without an ADC multiplier
+  int           _eff_settings_n = SETTINGS_N;  // effective count (may exclude Rotation, Cal ADC)
   unsigned long _pin_show_until = 0;
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
+  // Cal ADC sub-mode (Settings → Cal ADC): confirm screen, one action at a time.
+  bool           _in_adccal = false;
+  AdcCalibration _adccal;
+
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N               = 16;
+  static const int SETTINGS_N               = 17;
   static const int SETTINGS_COMMS_IDX       = 3;
   static const int SETTINGS_PM_IDX          = 4;
   static const int SETTINGS_DIM_IDX         = 5;
@@ -169,9 +175,10 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_ROT_IDX         = 12;
   static const int SETTINGS_UNREAD_IDX      = 13;
   static const int SETTINGS_LOG_IDX         = 14;
-  static const int SETTINGS_BACK_IDX        = 15;
+  static const int SETTINGS_ADC_IDX         = 15;
+  static const int SETTINGS_BACK_IDX        = 16;
 #elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N               = 15;
+  static const int SETTINGS_N               = 16;
   static const int SETTINGS_PM_IDX          = 3;
   static const int SETTINGS_DIM_IDX         = 4;
   static const int SETTINGS_C2L_CH_IDX      = 5;
@@ -183,9 +190,10 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_ROT_IDX         = 11;
   static const int SETTINGS_UNREAD_IDX      = 12;
   static const int SETTINGS_LOG_IDX         = 13;
-  static const int SETTINGS_BACK_IDX        = 14;
+  static const int SETTINGS_ADC_IDX         = 14;
+  static const int SETTINGS_BACK_IDX        = 15;
 #else
-  static const int SETTINGS_N               = 10;
+  static const int SETTINGS_N               = 11;
   static const int SETTINGS_PM_IDX          = 0;
   static const int SETTINGS_DIM_IDX         = 1;
   static const int SETTINGS_MCOTXT_IDX      = 2;
@@ -195,7 +203,8 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_ROT_IDX         = 6;
   static const int SETTINGS_UNREAD_IDX      = 7;
   static const int SETTINGS_LOG_IDX         = 8;
-  static const int SETTINGS_BACK_IDX        = 9;
+  static const int SETTINGS_ADC_IDX         = 9;
+  static const int SETTINGS_BACK_IDX        = 10;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -307,7 +316,50 @@ public:
 #endif
   }
 
+  // Settings list position → item index, skipping the rows hidden on this
+  // hardware (Rotation off e-ink, Cal ADC without a multiplier; ROT < ADC).
+  int settingsVisToIdx(int vis) const {
+    int i = vis;
+    if (!_rot_visible && i >= SETTINGS_ROT_IDX) i++;
+    if (!_adc_visible && i >= SETTINGS_ADC_IDX) i++;
+    return i;
+  }
+
+  // Cal ADC confirm screen. Full screen, no header, so it fits a 128x64 OLED:
+  // five rows of the smallest font — title, volts, multiplier, status, action.
+  void renderAdcCal(DisplayDriver& display) {
+    const AdcCalibration& c = _adccal;
+    int sz = (display.width() >= 200) ? 2 : 1;
+    int lh = 8 * sz + 3;
+    int cx = display.width() / 2;
+    int y  = 0;
+    char buf[32];
+    display.setTextSize(sz);
+    display.setColor(UIColor::primary_txt);
+    display.drawTextCentered(cx, y, "Cal ADC");
+    y += lh;
+    snprintf(buf, sizeof(buf), "%u.%02uV>%u.%02uV",
+             c.mv / 1000, (c.mv % 1000) / 10, c.target_mv / 1000, (c.target_mv % 1000) / 10);
+    display.drawTextCentered(cx, y, buf);
+    y += lh;
+    snprintf(buf, sizeof(buf), "k %.3f>%.3f", c.old_k, c.new_k);
+    display.drawTextCentered(cx, y, buf);
+    y += lh;
+    const char* note = c.statusText();
+    if (!note && AdcCalibration::usbKnown() && !board.isExternalPowered())
+      note = "No USB power";
+    if (note) {
+      display.setColor(UIColor::warning_txt);
+      display.drawTextCentered(cx, y, note);
+      display.setColor(UIColor::primary_txt);
+    }
+    y += lh;
+    snprintf(buf, sizeof(buf), "< %s >", AdcCalibration::actionName(c.sel));
+    display.drawTextCentered(cx, y, buf);
+  }
+
   int render(DisplayDriver& display) override {
+    if (_in_adccal) { renderAdcCal(display); return 60000; }
     display.setColor(UIColor::title_bkg);
     display.fillRect(0, 0, display.width(), 12);
     char tmp[80];
@@ -847,12 +899,13 @@ public:
 #endif
         const int CURSOR_W = 6 * hdr_size, LINE_H = 8 * hdr_size + 2, Y0 = content_y;
         _rot_visible = _task->isEinkDisplay();
-        _eff_settings_n = _rot_visible ? SETTINGS_N : SETTINGS_N - 1;
+        _adc_visible = AdcCalibration::supported(board);
+        _eff_settings_n = SETTINGS_N - (_rot_visible ? 0 : 1) - (_adc_visible ? 0 : 1);
         _settings_visible = (display.height() - Y0) / LINE_H;
         display.setColor(UIColor::primary_txt);
         for (int vis = _settings_scroll; vis < _eff_settings_n && vis < _settings_scroll + _settings_visible; vis++) {
-          // map visual index to logical (skip ROT slot for non-eInk)
-          int i = (!_rot_visible && vis >= SETTINGS_ROT_IDX) ? vis + 1 : vis;
+          // map visual index to logical (skip hidden rows)
+          int i = settingsVisToIdx(vis);
           int y = Y0 + (vis - _settings_scroll) * LINE_H;
           display.setColor(UIColor::primary_txt);
           display.setCursor(0, y);
@@ -883,6 +936,7 @@ public:
           else if (i == SETTINGS_ROT_IDX)      lbl = "Rotation";
           else if (i == SETTINGS_UNREAD_IDX)  lbl = "Max Unread";
           else if (i == SETTINGS_LOG_IDX)     lbl = "Max Log";
+          else if (i == SETTINGS_ADC_IDX)     lbl = "Cal ADC";
           display.print(lbl);
           // value (not for Back)
           if (i != SETTINGS_BACK_IDX) {
@@ -938,6 +992,9 @@ public:
             } else if (i == SETTINGS_LOG_IDX && _node_prefs) {
               static const int log_vals[3] = { 16, 32, 64 };
               snprintf(val, sizeof(val), "%d", log_vals[constrain(_node_prefs->ui_max_log_idx, 0, 2)]);
+            } else if (i == SETTINGS_ADC_IDX) {
+              uint16_t mv = board.getBattMilliVolts();
+              snprintf(val, sizeof(val), "%u.%02uV", mv / 1000, (mv % 1000) / 10);
             }
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
@@ -964,6 +1021,28 @@ public:
   }
 
   bool handleInput(char c) override {
+    // Cal ADC confirm screen. Single button: short = next action, long = run
+    // it, double = leave. Joystick: arrows pick, ● runs, long ● leaves.
+    if (_in_adccal) {
+      if (c == KEY_NEXT || c == KEY_DOWN || c == KEY_RIGHT) {
+        _adccal.step(true);
+      } else if (c == KEY_UP || c == KEY_LEFT) {
+        _adccal.step(false);
+      } else if (c == KEY_PREV || c == KEY_CANCEL) {
+        _in_adccal = false;
+      } else if (c == KEY_ENTER) {
+        _in_adccal = false;
+        if (_node_prefs) {
+          AdcCalibration::Result r = _adccal.run(board, *_node_prefs);
+          if (r == AdcCalibration::APPLIED || r == AdcCalibration::RESTORED) the_mesh.savePrefs();
+          if (r == AdcCalibration::APPLIED)        _task->showAlert("ADC calibrated", 1500);
+          else if (r == AdcCalibration::RESTORED)  _task->showAlert("ADC default", 1500);
+          else if (r == AdcCalibration::NO_EFFECT) _task->showAlert("ADC: no effect", 1500);
+        }
+      }
+      return true;
+    }
+
     // On CLOCK page: intercept navigation while PMs are being read inline
     if (_page == HomePage::CLOCK && _clock_pm_pending > 0) {
       if (c == KEY_NEXT || c == KEY_RIGHT) {
@@ -1067,8 +1146,8 @@ public:
       // For binary items direction doesn't matter; for multi-value LEFT reverses.
       if (c == KEY_RIGHT || c == KEY_ENTER || c == KEY_LEFT) {
         bool fwd = (c != KEY_LEFT);
-        // map visual sel to logical index (skip ROT slot for non-eInk)
-        int sel = (!_rot_visible && _settings_sel >= SETTINGS_ROT_IDX) ? _settings_sel + 1 : _settings_sel;
+        // map visual sel to logical index (skip hidden rows)
+        int sel = settingsVisToIdx(_settings_sel);
         if (sel == SETTINGS_BACK_IDX) {
           _in_settings = false;
         } else if (sel == SETTINGS_PM_IDX) {
@@ -1136,6 +1215,10 @@ public:
           _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
                                    size_table[_node_prefs->ui_max_log_idx]);
           the_mesh.savePrefs();
+        } else if (sel == SETTINGS_ADC_IDX) {
+          // Measure once on entry; the confirm screen shows that snapshot.
+          _adccal.measure(board);
+          _in_adccal = true;
         }
         return true;
       }
