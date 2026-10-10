@@ -73,6 +73,15 @@ public:
   // flag so recvRaw()/isSendComplete() read it. Guarded by ESP32 too, because the
   // ESP32-only GPIO read must not leak into nRF52 builds that set the PS flag.
   void recoverMissedDioInterrupt();
+  // GPIO the radio raises for RxDone/TxDone: DIO1 on SX126x; SX127x wrappers
+  // override it with DIO0. -1 when the board defines neither.
+  virtual int irqDioPin() const {
+  #if defined(P_LORA_DIO_1)
+    return P_LORA_DIO_1;
+  #else
+    return -1;
+  #endif
+  }
   #endif
 
   uint32_t getPacketsRecv() const { return n_recv; }

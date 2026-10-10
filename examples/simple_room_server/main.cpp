@@ -22,6 +22,13 @@ void halt() {
 }
 
 static char command[MAX_POST_TEXT_LEN+1];
+
+#if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
+  // Automatic light sleep: see helpers/esp32/ESP32AutoSleep.h
+  #include <helpers/esp32/ESP32AutoSleep.h>
+  static ESP32AutoSleep auto_sleep("Room server");
+  #define ROOM_PS_BOOT_HOLD_MS  120000   // CLI usable right after flashing
+#endif
 #ifdef ETHERNET_ENABLED
 static char ethernet_command[MAX_POST_TEXT_LEN+1];
 #endif
@@ -101,9 +108,17 @@ void setup() {
 #endif
 
   board.onBootComplete();
+
+#if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
+  auto_sleep.begin(the_mesh.getNodePrefs()->powersaving_enabled, ROOM_PS_BOOT_HOLD_MS);
+#endif
 }
 
 void loop() {
+#if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
+  // Note CLI bytes before the read loop below consumes them.
+  if (Serial.available()) auto_sleep.noteSerial();
+#endif
   int len = strlen(command);
   while (Serial.available() && len < sizeof(command)-1) {
     char c = Serial.read();
@@ -156,5 +171,11 @@ void loop() {
   rtc_clock.tick();
 #ifdef HAS_EXTERNAL_WATCHDOG
   external_watchdog.loop();
+#endif
+
+#if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
+  auto_sleep.service(the_mesh.getNodePrefs()->powersaving_enabled);
+  radio_driver.recoverMissedDioInterrupt();
+  auto_sleep.yieldIfIdle(the_mesh.getNodePrefs()->powersaving_enabled, the_mesh.hasDueWork());
 #endif
 }

@@ -22,6 +22,9 @@ public:
   bool isReceivingPacket() override { 
     return ((CustomSX1276 *)_radio)->isReceiving();
   }
+#if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING) && defined(P_LORA_DIO_0)
+  int irqDioPin() const override { return P_LORA_DIO_0; }   // SX127x: RxDone/TxDone on DIO0
+#endif
   float getCurrentRSSI() override {
     return ((CustomSX1276 *)_radio)->getRSSI(false);
   }
