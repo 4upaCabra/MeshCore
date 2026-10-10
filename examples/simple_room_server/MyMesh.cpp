@@ -645,6 +645,9 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 
   // defaults
   _prefs.airtime_factor = 1.0;
+#if defined(POWERSAVING_DEFAULT_ON)
+  _prefs.powersaving_enabled = 1;   // PS build: automatic light sleep on by default
+#endif
   _prefs.rx_delay_base = 0.0f;   // off by default, was 10.0
   _prefs.tx_delay_factor = 0.5f; // was 0.25f;
   _prefs.direct_tx_delay_factor = 0.2f; // was zero
@@ -1177,4 +1180,8 @@ void MyMesh::loop() {
   uint32_t now = millis();
   uptime_millis += now - last_millis;
   last_millis = now;
+}
+
+bool MyMesh::hasDueWork() const {
+  return _mgr->getOutboundCount(_ms->getMillis()) > 0;
 }

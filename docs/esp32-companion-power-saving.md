@@ -137,6 +137,16 @@ Light sleep разрешён только когда `Serial` — настоящ
 Не проверено на железе: сборка компилируется и проходит проверку ядра, но замер
 тока и поведение на реальном Heltec v3 ещё предстоит снять.
 
+### Общий модуль, room server и платы с нативным USB
+
+Авто-сон репитера вынесен в `src/helpers/esp32/ESP32AutoSleep.h`; им же
+пользуется room server (`Heltec_v3_room_server_ps`). На платах с нативным USB
+(v4, E213, E290, Wireless Paper, Tracker) сон тоже включён: пока USB-хост на линии
+(`(bool)USB` у TinyUSB, `Serial.isConnected()` у HWCDC), модуль держит
+`ESP_PM_NO_LIGHT_SLEEP` и `ESP_PM_APB_FREQ_MAX`, иначе консоль падает. Пробуждение
+по UART там не настраивается — консоль не UART. Окружения: `Heltec_WSL3_repeater_ps`,
+`heltec_v4[_r8][_tft]_repeater_ps`, `Heltec_E213/E290/Wireless_Paper/Wireless_Tracker_repeater_ps`.
+
 ## Измерено (Heltec v3, замер по USB через FNB58)
 
 | Состояние | Штатная сборка | С light sleep |

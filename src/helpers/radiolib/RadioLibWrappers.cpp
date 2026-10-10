@@ -90,8 +90,9 @@ void RadioLibWrapper::resetAGC() {
 
 #if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
 void RadioLibWrapper::recoverMissedDioInterrupt() {
-  #if defined(P_LORA_DIO_1)
-  const int level = gpio_get_level((gpio_num_t)P_LORA_DIO_1);
+  const int pin = irqDioPin();
+  if (pin < 0) return;
+  const int level = gpio_get_level((gpio_num_t)pin);
   // `state == STATE_RX` means the radio is receiving and the ISR flag is clear;
   // a HIGH DIO1 then means the packet-received edge fired while the CPU was
   // asleep and was never serviced. `STATE_TX_WAIT` is the same situation for
@@ -101,7 +102,6 @@ void RadioLibWrapper::recoverMissedDioInterrupt() {
   if (level == HIGH && (state == STATE_RX || state == STATE_TX_WAIT)) {
     state |= STATE_INT_READY;
   }
-  #endif
 }
 #endif
 

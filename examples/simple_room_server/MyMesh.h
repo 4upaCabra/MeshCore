@@ -241,4 +241,9 @@ public:
   void clearStats() override;
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
   void loop();
+
+  // Work due right now — an outbound packet scheduled for this moment. Packets
+  // parked for a delayed send do not count, so the ESP32 PS loop can sleep
+  // through the delay instead of spinning for it.
+  bool hasDueWork() const;
 };
