@@ -17,7 +17,29 @@ on:
 
 jobs:
 
+  # Publishing a draft prepared by a manual run creates its tag, and the tag push
+  # starts this workflow again. That release already carries its images, so
+  # nothing is built twice: a tag whose release exists is skipped.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - name: Check For An Existing Release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]] && gh release view "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} exists: not building it again"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   generate-build-matrix:
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.get-build-targets.outputs.targets }}
