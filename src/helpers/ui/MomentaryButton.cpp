@@ -1,6 +1,7 @@
 #include "MomentaryButton.h"
 
 #define MULTI_CLICK_WINDOW_MS  280
+#define DEBOUNCE_MS            50
 
 // ── Static ISR dispatch ──────────────────────────────────────────────────────
 // File-local: up to 8 buttons can register GPIO interrupts.
@@ -109,36 +110,67 @@ int MomentaryButton::check(bool repeat_click) {
 
   int event = BUTTON_EVENT_NONE;
   int btn = _threshold > 0 ? (analogRead(_pin) < _threshold) : digitalRead(_pin);
+  bool press_click = _long_millis == 0 && _multi_click_window == 0;
+  bool press_click_armed = true;
+#if defined(WITH_ASYNC_EINK)
+  if (press_click) press_click_armed = _press_click_armed;
+#endif
 
-  // ISR captured a press edge that occurred during a blocking call (e.g. eInk refresh).
-  // If the button is currently UP it means the full press+release was missed by the poll.
-  // Synthesize a pending click so it fires immediately on this check() call.
-  if (_irq_pressed) {
+  // ISR captured a press edge during a blocking call (e.g. eInk refresh).
+  // Legacy (long-press / multi-click buttons): if the button is currently UP the
+  // full press+release was missed by the poll — synthesize a pending click.
+  // press_click buttons are handled after the poll block below.
+  if (_irq_pressed && !press_click) {
     if (!isPressed(btn) && down_at == 0 && !cancel) {
-      _click_count++;
-      _last_click_time = millis();
-      _pending_click = true;
+      unsigned long now_irq = millis();
+      if ((now_irq - _last_click_emitted_ms) >= DEBOUNCE_MS) {
+        _click_count++;
+        _last_click_time = now_irq;
+        _pending_click = true;
+      }
     }
     _irq_pressed = false;
   }
 
   if (btn != prev) {
+    unsigned long now = millis();
+    _last_change_ms = now;
     if (isPressed(btn)) {
-      down_at = millis();
+      down_at = now;
       _irq_pressed = false;  // normal DOWN detected; IRQ flag is redundant
+      if (press_click) {
+        // Fire CLICK on press edge for instant response, but suppress within
+        // cooldown to prevent bounce-induced double-fire.
+        if (press_click_armed && (now - _last_click_emitted_ms) >= DEBOUNCE_MS) {
+          event = BUTTON_EVENT_CLICK;
+          _last_click_emitted_ms = now;
+#if defined(WITH_ASYNC_EINK)
+          _press_click_armed = false;
+#endif
+        }
+      }
     } else {
       // button UP
+      unsigned long held_ms = (down_at > 0) ? (now - down_at) : 0;
       if (_long_millis > 0) {
-        if (down_at > 0 && (unsigned long)(millis() - down_at) < _long_millis) {
-            _click_count++;
-            _last_click_time = millis();
-            _pending_click = true;
+        if (down_at > 0 && held_ms < _long_millis) {
+            // Only count as click if button was held long enough to filter
+            // out mechanical bounce cycles (< DEBOUNCE_MS).
+            if (held_ms >= DEBOUNCE_MS) {
+              _click_count++;
+              _last_click_time = now;
+              _pending_click = true;
+            }
         }
-      } else {
-          _click_count++;
-          _last_click_time = millis();
-          _pending_click = true;
+      } else if (!press_click) {
+          // Legacy: long==0 (with or without multi-click) → CLICK/count on release.
+          if (held_ms >= DEBOUNCE_MS) {
+            _click_count++;
+            _last_click_time = now;
+            _pending_click = true;
+          }
       }
+      // else (press_click): CLICK already fired on the press edge above.
       if (event == BUTTON_EVENT_CLICK && cancel) {
         event = BUTTON_EVENT_NONE;
         _click_count = 0;
@@ -149,6 +181,37 @@ int MomentaryButton::check(bool repeat_click) {
     }
     prev = btn;
   }
+
+  // press_click recovery: the ISR captured a press edge that the poll could not
+  // surface — happens when a release+next-press both occur during a blocking
+  // render, leaving prev stuck DOWN so the new press is not seen as an edge.
+  // Fire the missed CLICK and resync. Verify pin is actually pressed to prevent
+  // phantom clicks from noise-triggered interrupts.
+  if (_irq_pressed && press_click) {
+    _irq_pressed = false;
+    unsigned long now_irq = millis();
+    if (event == BUTTON_EVENT_NONE && press_click_armed && isPressed(btn)
+        && (now_irq - _last_click_emitted_ms) >= DEBOUNCE_MS) {
+      event = BUTTON_EVENT_CLICK;
+      _last_click_emitted_ms = now_irq;
+#if defined(WITH_ASYNC_EINK)
+      _press_click_armed = false;
+#endif
+      prev = btn;
+      down_at = now_irq;
+    }
+  }
+
+#if defined(WITH_ASYNC_EINK)
+  // Re-arm only after a continuously stable release. Mechanical bounce may
+  // cross the electrical threshold several times; every raw transition above
+  // updates _last_change_ms, extending this quiet period.
+  if (press_click && !_press_click_armed && !isPressed(btn)
+      && (unsigned long)(millis() - _last_change_ms) >= DEBOUNCE_MS) {
+    _press_click_armed = true;
+  }
+#endif
+
   if (!isPressed(btn) && cancel) {
     cancel = 0;
   }
@@ -156,12 +219,14 @@ int MomentaryButton::check(bool repeat_click) {
   if (_long_millis > 0 && down_at > 0 && (unsigned long)(millis() - down_at) >= _long_millis) {
     if (_pending_click) {
       cancelClick();
-    } else {
+    } else if ((millis() - _last_click_emitted_ms) >= DEBOUNCE_MS) {
       event = BUTTON_EVENT_LONG_PRESS;
+      _last_click_emitted_ms = millis();
       down_at = 0;
       _click_count = 0;
       _last_click_time = 0;
       _pending_click = false;
+      cancel = 1;  // suppress IRQ-synthesised click from button bounce during eink refresh
     }
   }
   if (down_at > 0 && repeat_click) {
@@ -175,12 +240,17 @@ int MomentaryButton::check(bool repeat_click) {
     if (down_at > 0) {
       return event;
     }
+    unsigned long now_emit = millis();
+    if ((now_emit - _last_click_emitted_ms) < DEBOUNCE_MS) {
+      return event;  // suppress within cooldown
+    }
     switch (_click_count) {
       case 1:  event = BUTTON_EVENT_CLICK;        break;
       case 2:  event = BUTTON_EVENT_DOUBLE_CLICK; break;
       case 3:  event = BUTTON_EVENT_TRIPLE_CLICK; break;
       default: event = BUTTON_EVENT_TRIPLE_CLICK; break;
     }
+    if (event != BUTTON_EVENT_NONE) _last_click_emitted_ms = now_emit;
     _click_count = 0;
     _last_click_time = 0;
     _pending_click = false;

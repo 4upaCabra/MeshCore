@@ -1674,6 +1674,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   joystick_left.begin();
   joystick_right.begin();
   back_btn.begin();
+  // Enable GPIO interrupts so presses during eInk refresh (~230ms busy-wait) are
+  // not lost. Directional inputs stay polled; analog buttons are excluded inside
+  // enableInterrupt() (threshold != 0).
+  user_btn.enableInterrupt();
 #endif
 #if defined(PIN_USER_BTN_ANA)
   analog_btn.begin();

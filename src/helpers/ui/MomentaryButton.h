@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <helpers/OptionalFeatureFlags.h>
 
 #define BUTTON_EVENT_NONE        0
 #define BUTTON_EVENT_CLICK       1
@@ -21,6 +22,14 @@ class MomentaryButton {
   bool _pending_click;
 
   volatile bool _irq_pressed = false;  // written by ISR; read+cleared in check()
+  unsigned long _last_change_ms = 0;   // debounce: last time btn level changed
+  unsigned long _last_click_emitted_ms = 0;   // cooldown: prevents double-fire from bounce
+#if defined(WITH_ASYNC_EINK)
+  // Instant press-edge buttons need a stable release before another press can
+  // emit. A time-only cooldown can interpret a long contact re-edge as a
+  // second physical tap when the UI loop polls continuously.
+  bool _press_click_armed = true;
+#endif
 
   bool isPressed(int level) const;
 
