@@ -28,6 +28,8 @@ public:
   virtual void setRotation(uint8_t r) {}
   virtual void forceFullRefresh() {}       // force full eInk refresh on next frame
   virtual void fullRefreshAndHibernate() {} // full refresh + hibernate for clean shutdown
+  // Line pitch in pixels for the given text size: cell height + inter-line gap.
+  virtual int getLineH(int sz) const { return 8 * sz + 3; }
   virtual bool isEink() const { return false; }
   virtual bool isColorTFT() const { return false; }
   virtual void setFullRefreshSuppressed(bool s) {}
