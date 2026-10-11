@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <Arduino.h>
 #include <Mesh.h>
 #include <helpers/SensorManager.h>
 #include <helpers/TimeSyncQuorum.h>
@@ -13,6 +14,11 @@
 #define TS_DRIFT_THRESHOLD 120u
 #define TS_MAX_JUMP        36000u
 #define TS_MAX_BACK        300u
+#define TS_MAX_AGE         43200u       // 12 h: covers a peer adverting a few
+                                        // times a day while bounding staleness
+                                        // to half a day (OS used 24 h)
+#define TS_QUIET_QUORUM    2            // peers enough when the aged window
+                                        // holds no more than this many
 
 enum class TsSyncResult : uint8_t { NONE, CLOCK, GPS };
 
@@ -41,6 +47,13 @@ public:
   uint32_t drift_threshold = TS_DRIFT_THRESHOLD;
   uint32_t max_jump        = TS_MAX_JUMP;
   uint32_t max_back        = TS_MAX_BACK;
+  uint32_t max_age         = TS_MAX_AGE;
+  int      quiet_quorum    = TS_QUIET_QUORUM;
+
+  // Local monotonic time in seconds, used only to age samples and to project
+  // an agreed offset back onto the local clock. It wraps with millis() after
+  // ~49.7 days, at which point the oldest samples simply expire.
+  uint32_t localNow() const { return (uint32_t)(millis() / 1000u); }
 
   // Feed advert timestamp (increments _advert_count).
   // pub_hash: first 4 bytes of the sender's public key.
