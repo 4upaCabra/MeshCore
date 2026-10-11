@@ -50,6 +50,14 @@ public:
     }
   }
 
+  // ESP32Board's version is compiled before PIN_VBAT_READ is defined above, so it
+  // stores nothing and returns false: the multiplier from prefs, the CLI and
+  // Cal ADC were all silently dropped. This board reads the battery itself.
+  bool setAdcMultiplier(float multiplier) override {
+    adc_mult = multiplier;
+    return true;
+  }
+
   float getAdcMultiplier() const override {
     return (adc_mult == 0.0f) ? ADC_MULTIPLIER : adc_mult;
   }
