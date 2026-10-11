@@ -100,7 +100,7 @@ inline int activeCount(const Sample* buf, int count, uint32_t now_local, uint32_
 // Quorum rules:
 //   trusted: 7 distinct senders whose offsets agree.
 //   unset:   3 agreeing senders when the aged window holds three or more
-//            distinct peers (the busy-mesh rule inherited from SEC); if it
+//            distinct peers (the busy-mesh rule); if it
 //            holds no more peers than quiet_quorum, all of those agreeing is
 //            enough. The aged window is what lets a sparse mesh accumulate its
 //            one or two neighbours over hours, while the "no more peers than
