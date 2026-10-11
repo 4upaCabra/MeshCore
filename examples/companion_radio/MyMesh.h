@@ -129,6 +129,8 @@ public:
   void handleCmdFrame(size_t len);
   bool advert();
   void enterCLIRescue();
+  void exitCLIRescue();
+  bool isCLIRescue() const { return _cli_rescue; }
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
   TimeSource getTimeSource() const { return _time_source; }

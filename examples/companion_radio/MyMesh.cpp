@@ -2576,6 +2576,17 @@ void MyMesh::enterCLIRescue() {
   Serial.println("========= CLI Rescue =========");
 }
 
+// Rescue mode diverts the loop away from checkSerialInterface(), so the
+// companion protocol stops dead while it is on. It used to be one-way — the
+// flag was cleared only in the constructor — which turned an accidental
+// long-press during the first seconds after boot into a phone app that stayed
+// broken until the node was power-cycled, with nothing on screen to say why.
+void MyMesh::exitCLIRescue() {
+  _cli_rescue = false;
+  cli_command[0] = 0;
+  Serial.println("========= CLI Rescue OFF =========");
+}
+
 void MyMesh::checkCLIRescueCmd() {
   int len = strlen(cli_command);
   while (Serial.available() && len < sizeof(cli_command)-1) {

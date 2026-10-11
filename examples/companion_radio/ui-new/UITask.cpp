@@ -2115,8 +2115,18 @@ char UITask::checkDisplayOn(char c) {
 }
 
 char UITask::handleLongPress(char c) {
+  // Rescue mode kills the companion protocol, and the entry window is exactly
+  // when a user is most likely to be prodding a freshly powered node. Make the
+  // same gesture the way back out, and say on screen that it happened -
+  // otherwise the only symptom is a phone app that stopped working.
+  if (the_mesh.isCLIRescue()) {
+    the_mesh.exitCLIRescue();
+    showAlert("CLI Rescue OFF", 1500);
+    return 0;
+  }
   if (millis() - ui_started_at < 8000) {   // long press in first 8 seconds since startup -> CLI/rescue
     the_mesh.enterCLIRescue();
+    showAlert("CLI RESCUE", 2000);
     c = 0;   // consume event
   }
   return c;
