@@ -45,6 +45,12 @@ namespace mesh {
 class MainBoard {
 public:
   virtual uint16_t getBattMilliVolts() = 0;
+  // Raw divider/ADC pack voltage when it can differ from getBattMilliVolts()
+  // (e.g. INA-first SoC). Default: same as getBattMilliVolts().
+  virtual uint16_t getBattAdcMilliVolts() { return getBattMilliVolts(); }
+  // Drop any cached battery sample, so the next getBattAdcMilliVolts() reads
+  // the pin again. Boards that do not cache need nothing here.
+  virtual void invalidateBatteryRead() { }
   virtual float getMCUTemperature() { return NAN; }
   virtual bool setAdcMultiplier(float multiplier) { return false; };
   virtual float getAdcMultiplier() const { return 0.0f; }

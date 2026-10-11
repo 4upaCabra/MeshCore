@@ -13,6 +13,7 @@ protected:
   struct ActiveSensor {
     void    (*query)(uint8_t channel, uint8_t sub_channel, CayenneLPP& telemetry);
     uint8_t   sub_channel;
+    const char* name;   // model name from SENSOR_TABLE (used to find power monitors)
   };
 
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
@@ -43,7 +44,7 @@ public:
   #endif
   bool begin() override;
   bool querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) override;
-  #if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC)
+  #if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC) || (defined(BATT_PACK_INA) && BATT_PACK_INA)
   void loop() override;
   #endif
   int getNumSettings() const override;

@@ -1,6 +1,8 @@
 #include "EnvironmentSensorManager.h"
 
 #include <Wire.h>
+#include <helpers/BatteryPack.h>
+#include <string.h>
 
 #if ENV_PIN_SDA && ENV_PIN_SCL
 #define TELEM_WIRE &Wire1  // Use Wire1 as the I2C bus for Environment Sensors
@@ -351,6 +353,15 @@ static void query_lps22hb(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 }
 #endif
 
+#if ENV_INCLUDE_INA3221 || ENV_INCLUDE_INA219 || ENV_INCLUDE_INA260 || ENV_INCLUDE_INA226
+// Last INA bus voltage is kept for boards that prefer an INA for the pack SoC
+// (BATT_PACK_INA). The cache is always compiled; only a board that reads it via
+// getBattMilliVolts() -> BatteryPack::hasFreshPackMilliVolts() sees the value.
+static void notePackVolts(float v) {
+  if (v > 0.5f) BatteryPack::notePackMilliVolts((uint16_t)(v * 1000.0f + 0.5f));
+}
+#endif
+
 #if ENV_INCLUDE_INA3221
 static uint8_t init_ina3221(TwoWire* wire, uint8_t addr) {
   if (!INA3221.begin(addr, wire)) return 0;
@@ -378,6 +389,7 @@ static void query_ina3221(uint8_t ch, uint8_t sub_ch, CayenneLPP& lpp) {
       if (seen == sub_ch) {
         float v = INA3221.getBusVoltage(i);
         float c = INA3221.getCurrentAmps(i);
+        notePackVolts(v);
         lpp.addVoltage(ch, v);
         lpp.addCurrent(ch, c);
         lpp.addPower(ch, v * c);
@@ -395,7 +407,9 @@ static uint8_t init_ina219(TwoWire* wire, uint8_t) {
   return INA219.begin(wire) ? 1 : 0;
 }
 static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
-  lpp.addVoltage(ch, INA219.getBusVoltage_V());
+  float v = INA219.getBusVoltage_V();
+  notePackVolts(v);
+  lpp.addVoltage(ch, v);
   lpp.addCurrent(ch, INA219.getCurrent_mA() / 1000.0f);
   lpp.addPower(ch, INA219.getPower_mW() / 1000.0f);
 }
@@ -406,7 +420,9 @@ static uint8_t init_ina260(TwoWire* wire, uint8_t addr) {
   return INA260.begin(addr, wire) ? 1 : 0;
 }
 static void query_ina260(uint8_t ch, uint8_t, CayenneLPP& lpp) {
-  lpp.addVoltage(ch, INA260.readBusVoltage() / 1000.0f);
+  float v = INA260.readBusVoltage() / 1000.0f;
+  notePackVolts(v);
+  lpp.addVoltage(ch, v);
   lpp.addCurrent(ch, INA260.readCurrent() / 1000.0f);
   lpp.addPower(ch, INA260.readPower() / 1000.0f);
 }
@@ -420,7 +436,9 @@ static uint8_t init_ina226(TwoWire*, uint8_t) {
   return 1;
 }
 static void query_ina226(uint8_t ch, uint8_t, CayenneLPP& lpp) {
-  lpp.addVoltage(ch, INA226.getBusVoltage());
+  float v = INA226.getBusVoltage();
+  notePackVolts(v);
+  lpp.addVoltage(ch, v);
   lpp.addCurrent(ch, INA226.getCurrent_mA() / 1000.0f);
   lpp.addPower(ch, INA226.getPower_mW() / 1000.0f);
 }
@@ -666,7 +684,7 @@ bool EnvironmentSensorManager::begin() {
     }
     MESH_DEBUG_PRINTLN("Found %s at address: %02X", def.name, def.address);
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
-      _active_sensors[_active_sensor_count++] = { def.query, sub };
+      _active_sensors[_active_sensor_count++] = { def.query, sub, def.name };
     }
   }
 
@@ -907,7 +925,7 @@ void EnvironmentSensorManager::stop_gps() {
 }
 #endif // ENV_INCLUDE_GPS
 
-#if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC)
+#if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC) || (defined(BATT_PACK_INA) && BATT_PACK_INA)
 void EnvironmentSensorManager::loop() {
 
   #if ENV_INCLUDE_GPS
@@ -961,5 +979,23 @@ void EnvironmentSensorManager::loop() {
     }
   }
   #endif  // ENV_INCLUDE_BME680_BSEC
+
+  #if defined(BATT_PACK_INA) && BATT_PACK_INA
+  // Throttled INA-only poll so the pack-voltage cache stays fresh without
+  // opening the Sensors page.
+  static uint32_t next_pack_poll_ms = 0;
+  if ((int32_t)(millis() - next_pack_poll_ms) >= 0) {
+    next_pack_poll_ms = millis() + 15000;
+    CayenneLPP lpp(48);
+    uint8_t ch = TELEM_CHANNEL_SELF + 1;
+    for (int i = 0; i < _active_sensor_count; i++) {
+      if (!_active_sensors[i].name || strncmp(_active_sensors[i].name, "INA", 3) != 0) {
+        continue;
+      }
+      _active_sensors[i].query(ch, _active_sensors[i].sub_channel, lpp);
+      break;  // first power monitor is enough for pack mV
+    }
+  }
+  #endif
 }
-#endif // ENV_INCLUDE_GPS || ENV_INCLUDE_BME680_BSEC
+#endif // ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC) || BATT_PACK_INA
