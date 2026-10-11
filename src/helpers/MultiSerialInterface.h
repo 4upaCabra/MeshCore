@@ -214,4 +214,29 @@ public:
     return 0;
   }
 
+  void disconnect() override {
+    for(auto iface : _interfaces){
+      if(iface.instance){
+        iface.instance->disconnect();
+      }
+    }
+  }
+
+  void flushSend() override {
+    for(auto iface : _interfaces){
+      if(iface.instance && iface.instance->isEnabled()){
+        iface.instance->flushSend();
+      }
+    }
+  }
+
+  bool hasPendingSend() const override {
+    for(auto iface : _interfaces){
+      if(iface.instance && iface.instance->isEnabled() && iface.instance->hasPendingSend()){
+        return true;
+      }
+    }
+    return false;
+  }
+
 };
