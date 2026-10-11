@@ -59,32 +59,43 @@ public:
   virtual void print(const char* str) = 0;
   virtual void printWordWrap(const char* str, int max_width) {
 #ifdef CYRILLIC_SUPPORT
-    // glcdfont6x8 is monospace: all glyphs 6 px wide, 8 px tall (scaled by _font_size)
-    const int char_w = 6 * _font_size;
-    const int line_h = 8 * _font_size;
+    // glcdfont6x8 is monospace: 6px wide, 8px tall per glyph at GFX scale _font_size
+    const int char_w    = 6 * _font_size;
+    const int line_h    = 8 * _font_size;
     const int max_chars = max_width / char_w;
+    // line_buf must hold max_chars Unicode chars; Cyrillic is 2 bytes each + NUL
+    char line_buf[192];
 
-    int len = (int)strlen(str);
-    int pos = 0;
-    char line_buf[64];   // one line: up to ~41 chars + NUL at size 1
+    int byte_pos = 0;
+    int total_bytes = (int)strlen(str);
 
-    while (pos < len && _cursor_y_raw + line_h <= height()) {
-      if (len - pos <= max_chars) {
-        print(str + pos);
+    while (byte_pos < total_bytes && _cursor_y_raw + line_h <= height()) {
+      // Count chars remaining from byte_pos
+      int chars_remaining = 0;
+      for (int i = byte_pos; str[i]; i++)
+        if ((str[i] & 0xC0) != 0x80) chars_remaining++;
+
+      if (chars_remaining <= max_chars) {
+        print(str + byte_pos);
         break;
       }
-      // prefer breaking on a space to avoid mid-word splits
-      int break_at = pos + max_chars;
-      for (int i = pos + max_chars; i > pos; i--) {
-        if (str[i] == ' ') { break_at = i; break; }
+
+      // Scan forward max_chars chars, track last space position
+      int bi = byte_pos, sc = 0, last_sp_byte = -1;
+      while (str[bi] && sc < max_chars) {
+        if (str[bi] == ' ') last_sp_byte = bi;
+        if ((str[bi] & 0xC0) != 0x80) sc++;
+        bi++;
       }
-      int seg_len = break_at - pos;
-      if (seg_len > (int)sizeof(line_buf) - 1) seg_len = (int)sizeof(line_buf) - 1;
-      memcpy(line_buf, str + pos, seg_len);
-      line_buf[seg_len] = 0;
+
+      int break_byte = (last_sp_byte >= 0) ? last_sp_byte : bi;
+      int seg = break_byte - byte_pos;
+      if (seg >= (int)sizeof(line_buf)) seg = (int)sizeof(line_buf) - 1;
+      memcpy(line_buf, str + byte_pos, seg);
+      line_buf[seg] = 0;
       print(line_buf);
 
-      pos = break_at + (str[break_at] == ' ' ? 1 : 0);
+      byte_pos = break_byte + (str[break_byte] == ' ' ? 1 : 0);
       _cursor_y_raw += line_h;
       if (_cursor_y_raw + line_h <= height()) setCursor(0, _cursor_y_raw);
     }
