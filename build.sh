@@ -217,6 +217,7 @@ build_repeater_firmwares() {
 COMPANION_RELEASE_SKIP=(
   "LilyGo_TBeam_1W_companion_radio_uni"
   "ThinkNode_M5_companion_radio_uni"
+  "nibble_screen_connect_companion_radio_uni"
 )
 
 # The companion images a release carries: one per board — the uni image (BLE,

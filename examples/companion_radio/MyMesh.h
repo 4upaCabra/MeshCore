@@ -414,7 +414,10 @@ private:
   #else
     #define RAWFEED_LOG(...) {}
   #endif
-  #define RAW_FEED_RING_SLOTS 8
+  // A variant short of RAM can shrink the ring: every slot is ~264 bytes.
+  #ifndef RAW_FEED_RING_SLOTS
+    #define RAW_FEED_RING_SLOTS 8
+  #endif
   #define RAW_FEED_DATA_MAX (MAX_TRANS_UNIT + 2)       // [snr][rssi][raw packet]
   #define RAW_FEED_TTL_MILLIS (6UL * 60UL * 60UL * 1000UL)
   struct RawFeedEntry {
