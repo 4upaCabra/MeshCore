@@ -653,112 +653,15 @@ static bool isShare(const mesh::Packet *packet) {
 static const uint32_t MIN_VALID_TS = 1577836800; // 2020-01-01 UTC
 static const uint32_t MAX_VALID_TS = 2524608000; // 2050-01-01 UTC
 
-void MyMesh::tryTimeSyncFromBuf() {
-  static const uint32_t DRIFT_THRESHOLD = 120;
-  static const uint32_t MAX_JUMP        = 36000;
-  static const uint32_t CLUSTER_WINDOW  = 60;
-  static const uint32_t SAMPLE_MAX_AGE  = 86400;  // ignore anything older than a day
-
-  uint32_t current = getRTCClock()->getCurrentTime();
-  unsigned long now_millis = millis();
-
-  // Age every sample forward to "now": a peer that said T, N seconds ago, is
-  // claiming T+N now. Without this, adverts that arrived minutes or hours apart
-  // could never fall inside CLUSTER_WINDOW, so a quiet mesh (where nodes advert
-  // only a few times a day) would never reach a quorum at all.
-  struct Aged { uint32_t ts; uint32_t pub_hash; };
-  // Drop expired samples from the ring as we go, so the buffer reflects what is
-  // actually usable rather than filling up with entries nobody can use.
-  Aged aged[TS_BUF_SIZE];
-  int n = 0;
-  int kept = 0;
-  for (int i = 0; i < _ts_buf_count; i++) {
-    uint32_t age = (uint32_t)((now_millis - _ts_buf[i].rx_millis) / 1000);
-    if (age > SAMPLE_MAX_AGE) continue;   // too old to say anything useful
-    if (kept != i) _ts_buf[kept] = _ts_buf[i];
-    kept++;
-    aged[n].ts = _ts_buf[i].ts + age;
-    aged[n].pub_hash = _ts_buf[i].pub_hash;
-    n++;
-  }
-  if (kept != _ts_buf_count) {
-    _ts_buf_count = kept;
-    _ts_buf_pos = kept % TS_BUF_SIZE;
-  }
-
-  // The quorum counts distinct peers, not raw samples: one peer adverting
-  // repeatedly must not be able to move our clock on its own.
-  bool unset = (!getRTCClock()->isTimeReliable() || _ts_restored_from_flash) && (_ts_sync_count == 0);
-  int quorum = unset ? 2 : 3;
-  if (n < quorum) return;
-
-  // sort by timestamp (insertion sort, n is small)
-  for (int i = 1; i < n; i++) {
-    Aged key = aged[i];
-    int j = i - 1;
-    while (j >= 0 && aged[j].ts > key.ts) { aged[j+1] = aged[j]; j--; }
-    aged[j+1] = key;
-  }
-
-  // Find the window holding the most DISTINCT peers.
-  int best_peers = 0, best_start = 0, best_end = 0;
-  for (int i = 0; i < n; i++) {
-    int end_idx = i;
-    while (end_idx < n && aged[end_idx].ts - aged[i].ts <= CLUSTER_WINDOW) end_idx++;
-    int peers = 0;
-    for (int a = i; a < end_idx; a++) {
-      bool dup = false;
-      for (int b = i; b < a; b++) {
-        if (aged[b].pub_hash == aged[a].pub_hash) { dup = true; break; }
-      }
-      if (!dup) peers++;
-    }
-    if (peers > best_peers) { best_peers = peers; best_start = i; best_end = end_idx; }
-  }
-  if (best_peers > _ts_best_cluster) _ts_best_cluster = best_peers;
-  if (best_peers < quorum) return;
-
-  uint32_t median = aged[(best_start + best_end) / 2].ts;
-
-  auto applySync = [&](uint32_t ts, int32_t adj) {
-    LocationProvider* gps = sensors.getLocationProvider();
-    if (gps != nullptr && gps->isEnabled() && gps->isValid()) {
-      gps->syncTime(); // let GPS re-sync the clock authoritatively
-      MESH_DEBUG_PRINTLN("TimeSync: GPS re-sync requested (quorum drift %ld sec)", (long)adj);
-    } else {
-      getRTCClock()->setCurrentTime(ts);
-      MESH_DEBUG_PRINTLN("TimeSync: clock set, adj %ld sec (%d peers)", (long)adj, best_peers);
-    }
-    _ts_last_adj = adj;
-    _ts_last_sync = ts;
-    _ts_sync_count++;
-    _ts_restored_from_flash = false;   // now backed by a real quorum
-    saveClockToFile();                 // keep the corrected time across reboots
-  };
-
-  if (unset) {
-    applySync(median, (int32_t)median - (int32_t)current);
-  } else {
-    uint32_t diff = (median > current) ? median - current : current - median;
-    if (diff > DRIFT_THRESHOLD && diff < MAX_JUMP) {
-      applySync(median, (int32_t)median - (int32_t)current);
-    }
-  }
-}
-
 void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32_t timestamp,
                           const uint8_t *app_data, size_t app_data_len) {
   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
 
-  _ts_advert_count++;
-  if (timestamp > MIN_VALID_TS && timestamp < MAX_VALID_TS) {
-    _ts_valid_count++;
-    uint32_t pub_hash;
-    memcpy(&pub_hash, id.pub_key, 4);
-    _ts_buf[_ts_buf_pos] = { timestamp, pub_hash, millis() };
-    _ts_buf_pos = (_ts_buf_pos + 1) % TS_BUF_SIZE;
-    if (_ts_buf_count < TS_BUF_SIZE) _ts_buf_count++;
-    tryTimeSyncFromBuf();
+  if (_ts.feedAdvert(timestamp, TimeSyncHelper::pubHash(id.pub_key))) {
+    if (_ts.trySync(getRTCClock(), &sensors) != TsSyncResult::NONE) {
+      _ts.clock_restored = false;   // a real quorum has now confirmed the clock
+      saveClockToFile();            // keep the corrected time across reboots
+    }
   }
 
   // if this a zero hop advert (and not via 'Share'), add it to neighbours
@@ -1111,7 +1014,7 @@ void MyMesh::restoreClockFromFile() {
     // it is a starting point, not a synced clock: leave the sync state untouched
     // so the first quorum is still treated as an initial set (and is not blocked
     // by MAX_JUMP if the node was powered down for a long time).
-    _ts_restored_from_flash = true;
+    _ts.clock_restored = true;
     _ts_restore_base = saved;
     _ts_restore_millis = millis();
     MESH_DEBUG_PRINTLN("Clock restored from flash: %u", (unsigned)saved);
@@ -1126,7 +1029,7 @@ void MyMesh::checkpointClock() {
   // A value restored from storage is not re-persisted either: it is only as
   // fresh as the last save, and rewriting it would keep an arbitrarily stale
   // clock alive across reboots until a quorum finally confirms one.
-  if (!getRTCClock()->isTimeReliable() || _ts_restored_from_flash) return;
+  if (!getRTCClock()->isTimeReliable() || _ts.clock_restored) return;
   uint32_t now = getRTCClock()->getCurrentTime();
   if (now > MIN_VALID_TS && now < MAX_VALID_TS) {
     rtcmem_time = now;
@@ -1138,7 +1041,7 @@ void MyMesh::checkpointClock() {
 void MyMesh::saveClockToFile() {
   // Never persist the placeholder, nor re-persist a value that only came back
   // from storage and has not been confirmed by a quorum or set by hand.
-  if (!getRTCClock()->isTimeReliable() || _ts_restored_from_flash) return;
+  if (!getRTCClock()->isTimeReliable() || _ts.clock_restored) return;
   uint32_t now = getRTCClock()->getCurrentTime();
   if (now <= MIN_VALID_TS || now >= MAX_VALID_TS) return;   // nothing worth saving
 
@@ -1490,24 +1393,7 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     }
     reply[0] = 0;
   } else if (memcmp(command, "timesync", 8) == 0) {
-    uint32_t now = getRTCClock()->getCurrentTime();
-    DateTime dt(now);
-    if (_ts_sync_count == 0) {
-      bool unset_mode = !getRTCClock()->isTimeReliable();
-      sprintf(reply, "TimeSync: no sync yet\nAdverts: %lu rx / %lu valid\nBuf: %d/%d (best: %d peers, need %d)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
-        (unsigned long)_ts_advert_count, (unsigned long)_ts_valid_count,
-        _ts_buf_count, (int)TS_BUF_SIZE, _ts_best_cluster, unset_mode ? 2 : 3,
-        dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
-    } else {
-      uint32_t ago = now > _ts_last_sync ? now - _ts_last_sync : 0;
-      DateTime ls(_ts_last_sync);
-      sprintf(reply, "TimeSync: %lu syncs\nLast: %02d:%02d %d-%02d-%02d UTC (%lus ago)\nAdj: %+lds\nAdverts: %lu rx / %lu valid\nBuf: %d/%d (best: %d peers)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
-        (unsigned long)_ts_sync_count,
-        ls.hour(), ls.minute(), ls.year(), ls.month(), ls.day(),
-        (unsigned long)ago, (long)_ts_last_adj,
-        (unsigned long)_ts_advert_count, (unsigned long)_ts_valid_count,
-        _ts_buf_count, (int)TS_BUF_SIZE, _ts_best_cluster, dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
-    }
+    _ts.buildReply(reply, 160, getRTCClock());  // smallest caller buffer: serial reply[160]
   } else if (memcmp(command, "discover.neighbors", 18) == 0) {
     const char* sub = command + 18;
     while (*sub == ' ') sub++;
@@ -1540,17 +1426,17 @@ void MyMesh::loop() {
     // A restored clock only ever ticks forward with uptime. If it has moved by
     // more than that, something set it (CLI, companion app, GPS), so it is no
     // longer merely a restored value and may be persisted again.
-    if (_ts_restored_from_flash) {
+    if (_ts.clock_restored) {
       uint32_t expected = _ts_restore_base + (uint32_t)((millis() - _ts_restore_millis) / 1000);
       uint32_t t = getRTCClock()->getCurrentTime();
       uint32_t diff = (t > expected) ? t - expected : expected - t;
-      if (diff > 120) _ts_restored_from_flash = false;
+      if (diff > 120) _ts.clock_restored = false;
     }
     checkpointClock();
     // The clock can also be set by hand over CLI, which is a rare event worth
     // one flash write: persist the first plausible time we ever see, so it is
     // not lost on the next power cycle.
-    if (!_clock_persisted && getRTCClock()->isTimeReliable() && !_ts_restored_from_flash) {
+    if (!_clock_persisted && getRTCClock()->isTimeReliable() && !_ts.clock_restored) {
       saveClockToFile();
       _clock_persisted = true;
     }
