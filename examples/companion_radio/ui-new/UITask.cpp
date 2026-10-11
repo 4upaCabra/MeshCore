@@ -886,9 +886,13 @@ public:
         display.drawTextCentered(display.width() / 2, content_y + 8, "Settings");
         display.drawTextCentered(display.width() / 2, content_y + 24, PRESS_LABEL " to enter");
         // Firmware version with the commit hash, e.g. "v1.17.1-6cf6277b" — the boot
-        // splash is gone in 3 s, and this is where to check what is flashed.
-        if (content_y + 40 + 8 * hdr_size <= display.height()) {
-          display.drawTextCentered(display.width() / 2, content_y + 40, FIRMWARE_VERSION);
+        // splash is gone in 3 s, and this is where to check what is flashed. On a
+        // 64-px OLED there is no room at content_y + 40: it takes the bottom line.
+        const int ver_h = 8 * hdr_size;
+        int ver_y = content_y + 40;
+        if (ver_y + ver_h > display.height()) ver_y = display.height() - ver_h;
+        if (ver_y >= content_y + 24 + ver_h) {
+          display.drawTextCentered(display.width() / 2, ver_y, FIRMWARE_VERSION);
         }
       } else {
         static const char* pm_clok_vals[2] = { "all", "PM" };
