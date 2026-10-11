@@ -520,6 +520,7 @@ bool MyMesh::emitBufferedRawFeed() {
   RawFeedEntry& slot = raw_feed_ring[tail];
   raw_feed_len--;
   if (millis() - slot.at_ms > RAW_FEED_TTL_MILLIS) return false;   // too old to replay
+  if (slot.len < 2 || slot.len > RAW_FEED_DATA_MAX) return false;  // never trust the ring length
   uint8_t frame[RAW_FEED_DATA_MAX + 1];
   frame[0] = PUSH_CODE_LOG_RX_DATA;
   memcpy(&frame[1], slot.data, slot.len);
@@ -3624,6 +3625,7 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
   if (compatTextFrameLayout(source.buf, source.len, layout)) {
     char original[MAX_FRAME_SIZE + 1];
     const size_t original_length = source.len - layout.header_length;
+    if (original_length + 1 > sizeof(original)) return 0;
     memcpy(original, source.buf + layout.header_length, original_length);
     original[original_length] = '\0';
 
@@ -3703,7 +3705,8 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
                                          meta.has_sender ? meta.sender : "MCMP");
       const int body_result = mcmp::formatPlaceholder(
           meta, placeholder, sizeof(placeholder));
-      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix) && body_result > 0) {
+      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix) &&
+          body_result > 0 && body_result < (int)sizeof(placeholder)) {
         prefix_length = (size_t)prefix_result;
         body = placeholder;
         body_length = (size_t)body_result;
@@ -3739,7 +3742,8 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
                                          meta.sender[0] ? meta.sender : "MCOimg");
       const int body_result = snprintf(placeholder, sizeof(placeholder),
                                        "<MCOimg v%u image>", (unsigned)meta.version);
-      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix) && body_result > 0) {
+      if (prefix_result > 0 && prefix_result < (int)sizeof(prefix) &&
+          body_result > 0 && body_result < (int)sizeof(placeholder)) {
         prefix_length = (size_t)prefix_result;
         body = placeholder;
         body_length = (size_t)body_result;
