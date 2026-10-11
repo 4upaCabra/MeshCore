@@ -27,8 +27,15 @@
 
 #if UI_HAS_JOYSTICK
   #define PRESS_LABEL "press Enter"
+  // On joystick boards a short SELECT click = KEY_ENTER; hibernation must require
+  // a deliberate press-and-hold, which the SELECT long press maps to (KEY_CANCEL).
+  #define HIBERNATE_KEY   KEY_CANCEL
+  #define HIBERNATE_LABEL "hold Select"
 #else
   #define PRESS_LABEL "long press"
+  // Single-button boards already map the long press to KEY_ENTER.
+  #define HIBERNATE_KEY   KEY_ENTER
+  #define HIBERNATE_LABEL "long press"
 #endif
 
 #include "icons.h"
@@ -1014,12 +1021,12 @@ public:
         if (display.height() - content_y >= 32 + 2 * line_h) {
           display.drawXbm((display.width() - 32) / 2, content_y, power_icon, 32, 32);
           display.drawTextCentered(display.width() / 2, display.height() - line_h * 2, "hibernate:");
-          display.drawTextCentered(display.width() / 2, display.height() - line_h + 1, PRESS_LABEL);
+          display.drawTextCentered(display.width() / 2, display.height() - line_h + 1, HIBERNATE_LABEL);
         } else {
           // A small screen (64-px OLED) has no room for the label under the icon:
           // it goes to the right of it, both centred together.
           int text_w = display.getTextWidth("hibernate:");
-          const int label_w = display.getTextWidth(PRESS_LABEL);
+          const int label_w = display.getTextWidth(HIBERNATE_LABEL);
           if (label_w > text_w) text_w = label_w;
           const int x = (display.width() - (32 + 6 + text_w)) / 2;
           const int y = content_y + (display.height() - content_y - 32) / 2;
@@ -1027,7 +1034,7 @@ public:
           display.setCursor(x + 32 + 6, y + 16 - line_h + 1);
           display.print("hibernate:");
           display.setCursor(x + 32 + 6, y + 16 + 1);
-          display.print(PRESS_LABEL);
+          display.print(HIBERNATE_LABEL);
         }
       }
     }
@@ -1312,7 +1319,7 @@ public:
       _settings_scroll = 0;
       return true;
     }
-    if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
+    if (c == HIBERNATE_KEY && _page == HomePage::SHUTDOWN) {
       _shutdown_init = true;  // need to wait for button to be released
       return true;
     }
