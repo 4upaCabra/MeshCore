@@ -41,6 +41,9 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/OptionalFeatureFlags.h>
 #include <helpers/BaseSerialInterface.h>
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+#include <helpers/CompanionFrameFragments.h>
+#endif
 #include <helpers/IdentityStore.h>
 #include <helpers/OfflineRecordRing.h>
 #include <helpers/SimpleMeshTables.h>
@@ -75,6 +78,14 @@
 
 #ifndef OFFLINE_QUEUE_SIZE
 #define OFFLINE_QUEUE_SIZE 16
+#endif
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+#ifndef OFFLINE_LONG_FRAME_SLOTS
+// Eight long frames can sit in the queue at once. A burst of long messages
+// evicts its own predecessors from RAM otherwise; each slot is
+// companion_frames::MAX_ORIGINAL_LEN bytes, so eight of them cost about 2 KB.
+#define OFFLINE_LONG_FRAME_SLOTS 8
+#endif
 #endif
 
 #ifndef BLE_NAME_PREFIX
@@ -291,6 +302,11 @@ public:
   }
   void setMCOimgDetectEnabled(bool enabled);
 
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  bool isFramedPacketsEnabled() const { return _prefs.framed_packets_enabled != 0; }
+  void setFramedPacketsEnabled(bool enabled);
+#endif
+
 #ifdef WITH_WIFI_SWITCHING
   void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
   bool isWifiConnecting() const { return _wifi_connecting; }
@@ -397,15 +413,38 @@ private:
   uint32_t _app_time_lock_until = 0;
   void noteTimeSource(TimeSource source);
 
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  // A queued frame keeps up to MAX_FRAME_SIZE bytes in place; a longer one (only
+  // with fragments on) stores a slot index into the fixed long-frame RAM pool.
+  // compat_flags stays inside the Frame, so it shifts with the entry.
+  struct Frame {
+    uint16_t len;
+    uint8_t compat_flags;
+    union { uint8_t inline_buf[MAX_FRAME_SIZE]; uint8_t long_slot; } storage;
+  };
+  static_assert(OFFLINE_LONG_FRAME_SLOTS > 0 && OFFLINE_LONG_FRAME_SLOTS <= 8,
+                "long-frame slot mask is uint8_t");
+  int offline_queue_len;
+  Frame offline_queue[OFFLINE_QUEUE_SIZE];
+  uint8_t long_frame_pool[OFFLINE_LONG_FRAME_SLOTS][companion_frames::MAX_ORIGINAL_LEN];
+  uint8_t long_frame_slot_mask;
+  int allocLongFrameSlot();
+  void freeLongFrameSlot(uint8_t slot);
+  uint8_t* frameData(Frame& frame);
+  const uint8_t* frameData(const Frame& frame) const;
+  void releaseFrameStorage(Frame& frame);
+  int buildLegacyQueuedFrame(const uint8_t* src, uint16_t len, uint8_t* dest) const;
+#else
   struct Frame {
     uint8_t len;
     uint8_t compat_flags;
     uint8_t buf[MAX_FRAME_SIZE];
-
-    bool isChannelMsg() const;
   };
   int offline_queue_len;
   Frame offline_queue[OFFLINE_QUEUE_SIZE];
+  const uint8_t* frameData(const Frame& frame) const { return frame.buf; }
+  uint8_t* frameData(Frame& frame) { return frame.buf; }
+#endif
   // Per-entry bookkeeping, kept outside the Frame so it travels with the entry
   // as the queue shifts: 1 while the entry has not reached the filesystem, its
   // sequence number in the offline store, and where its route lives.
@@ -419,6 +458,8 @@ private:
   void clearQueueAux(int pos);
   void onQueueEntryRemoved(int pos);   // before the entry at pos leaves the queue
   void initQueueEntry(int pos, uint8_t compat_flags, uint32_t seq);
+  void removeOfflineQueueAt(int pos);
+  bool isQueuedChannelMsg(const Frame& frame) const;
 
   // Set OFFLINE_STORE_DEBUG=1 to trace what the offline store keeps and hands
   // back. Keep it off for builds whose Serial carries the companion protocol.
@@ -445,7 +486,13 @@ private:
   // Writes happen only from loop(), never while a BLE link is up (a flash write
   // stalls the SoftDevice), and only once the queue has been quiet for a moment:
   // an entry the app takes right away never touches the flash.
-  #define OFFLINE_STORE_MAX_FRAME MAX_FRAME_SIZE
+  // With fragments on a queued frame can hold up to FR01's 259-byte original;
+  // without them addToOfflineQueue() cannot store more than MAX_FRAME_SIZE.
+  #ifdef WITH_COMPANION_FRAME_FRAGMENTS
+    #define OFFLINE_STORE_MAX_FRAME companion_frames::MAX_ORIGINAL_LEN
+  #else
+    #define OFFLINE_STORE_MAX_FRAME MAX_FRAME_SIZE
+  #endif
   #define OFFLINE_ROUTE_MAX (MAX_TRANS_UNIT + 2)   // [snr x4][rssi][raw packet]
   // The ring shares the filesystem with the contacts, so its size is a product
   // decision, set per variant.
@@ -547,6 +594,14 @@ private:
   bool                   _app_supports_mcmp = false;
   bool                   _app_supports_aeic = false;
   bool                   _app_supports_mcoimg = false;
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  // The current CMD_APP_START declared `frmfrg1`; false until declared.
+  bool                   _app_supports_frmfrg1 = false;
+  uint16_t               next_fragment_id;
+  uint16_t               queued_fragment_id;
+  uint8_t                queued_fragment_index;
+  bool                   queued_fragment_ack_pending;
+#endif
   unsigned long          _pending_reboot_at = 0;
   unsigned long          _pending_reboot_deadline = 0;
   unsigned long          _pending_poweroff_at = 0;
@@ -560,7 +615,20 @@ private:
 
   bool transformCompatText(const char* text, bool has_name, char* output,
                            size_t output_size);
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  int getNextAppFrame(uint8_t frame[], bool has_ack=false, uint16_t ack_id=0, uint8_t ack_index=0);
+  int emitQueuedOriginalForApp(uint8_t frame[], bool retain_source,
+                               bool has_ack, uint16_t ack_id, uint8_t ack_index,
+                               bool& stage_complete);
+  bool canSendFrameFragments() const;
+  void resetFragmentTransferState();
+  void resetFragmentSession();
+  uint16_t allocFragmentId();
+  void writeFrameMaybeFragmented(const uint8_t frame[], uint16_t len, uint8_t flags=0);
+  void writePacketPayloadFrameMaybeFragmented(mesh::Packet* packet, uint8_t push_code, uint8_t path_byte, const char* name);
+#else
   int getNextAppFrame(uint8_t frame[]);
+#endif
   int renderCompatFramePart(const Frame& source, size_t part_index,
                             size_t& part_count, bool& additive,
                             uint8_t output[]);

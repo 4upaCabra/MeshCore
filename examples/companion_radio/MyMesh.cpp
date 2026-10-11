@@ -4,6 +4,9 @@
 #include <Mesh.h>
 #include <helpers/CompanionAppCapabilities.h>
 #include <helpers/MCOCompatText.h>
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+#include <helpers/CompanionFrameFragments.h>
+#endif
 #ifdef WITH_MCOTXT
 #include <helpers/mcotxt/MCOtxtParts.h>
 #include <helpers/mcotxt/MCOtxtTransport.h>
@@ -31,6 +34,7 @@
 #define CMD_SET_ADVERT_NAME           8
 #define CMD_ADD_UPDATE_CONTACT        9
 #define CMD_SYNC_NEXT_MESSAGE         10
+#define SYNC_FLAG_FRAGMENT_ACK        0x01
 #define CMD_SET_RADIO_PARAMS          11
 #define CMD_SET_RADIO_TX_POWER        12
 #define CMD_RESET_PATH                13
@@ -299,53 +303,106 @@ void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, co
   }
 }
 
-bool MyMesh::Frame::isChannelMsg() const {
-  return buf[0] == RESP_CODE_CHANNEL_MSG_RECV || buf[0] == RESP_CODE_CHANNEL_MSG_RECV_V3 ||
-         buf[0] == RESP_CODE_CHANNEL_DATA_RECV;
+// Frame storage: with fragments on a long frame lives in the shared pool; these
+// helpers read through either representation so the queue code stays one path.
+bool MyMesh::isQueuedChannelMsg(const Frame& frame) const {
+  const uint8_t* data = frameData(frame);
+  return data && (data[0] == RESP_CODE_CHANNEL_MSG_RECV ||
+                  data[0] == RESP_CODE_CHANNEL_MSG_RECV_V3 ||
+                  data[0] == RESP_CODE_CHANNEL_DATA_RECV);
 }
 
 int MyMesh::addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags, uint32_t seq) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  // The queue can hold FR01's full 259-byte original frame.
+  if (!frame || len <= 0 || len > companion_frames::MAX_ORIGINAL_LEN) return -1;
+#else
   // Frame::buf holds MAX_FRAME_SIZE bytes: a longer frame would overflow it and
   // a non-positive length makes no sense.
   if (!frame || len <= 0 || len > MAX_FRAME_SIZE) return -1;
+#endif
   if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
     MESH_DEBUG_PRINTLN("WARN: offline_queue is full!");
     // A multi-part conversion keeps its original raw frame at queue[0] until
     // the final part is delivered. Never evict that active source midway.
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+    int pos = (_app_sync_active || queued_fragment_id) ? 1 : 0;
+#else
     int pos = _app_sync_active ? 1 : 0;
-    while (pos < offline_queue_len && !offline_queue[pos].isChannelMsg()) pos++;
+#endif
+    while (pos < offline_queue_len && !isQueuedChannelMsg(offline_queue[pos])) pos++;
     if (pos >= offline_queue_len) {
       MESH_DEBUG_PRINTLN("INFO: no channel messages to remove from queue.");
       return -1;
     }
-    onQueueEntryRemoved(pos);
-    for (int i = pos; i < offline_queue_len - 1; i++) {
-      offline_queue[i] = offline_queue[i + 1];
-      moveQueueAux(i, i + 1);
-    }
-    offline_queue_len--;
-    clearQueueAux(offline_queue_len);
+    removeOfflineQueueAt(pos);
     MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
   }
+
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  int slot = -1;
+  if (len > MAX_FRAME_SIZE && _prefs.framed_packets_enabled) {
+    slot = allocLongFrameSlot();
+    if (slot < 0) {
+      // The pool is full: give up the oldest long channel message instead.
+      const int start = (_app_sync_active || queued_fragment_id) ? 1 : 0;
+      for (int i = start; i < offline_queue_len; i++) {
+        if (offline_queue[i].len > MAX_FRAME_SIZE && isQueuedChannelMsg(offline_queue[i])) {
+          removeOfflineQueueAt(i);
+          slot = allocLongFrameSlot();
+          break;
+        }
+      }
+    }
+  }
+#endif
+
   const int pos = offline_queue_len;
-  offline_queue[pos].len = len;
-  memcpy(offline_queue[pos].buf, frame, len);
+  Frame& queued = offline_queue[pos];
+  queued.len = len;
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  if (len <= MAX_FRAME_SIZE) {
+    memcpy(queued.storage.inline_buf, frame, len);
+  } else if (slot >= 0) {
+    queued.storage.long_slot = (uint8_t)slot;
+    memcpy(long_frame_pool[slot], frame, len);
+  } else {
+    const int legacy_len = buildLegacyQueuedFrame(frame, len, queued.storage.inline_buf);
+    if (!legacy_len) {
+      queued.len = 0;
+      MESH_DEBUG_PRINTLN("long-frame pool full: unsafe frame type %02X dropped", frame[0]);
+      return -1;
+    }
+    queued.len = (uint16_t)legacy_len;
+    MESH_DEBUG_PRINTLN("long-frame pool full: stored legacy frame");
+  }
+#else
+  memcpy(queued.buf, frame, len);
+#endif
   initQueueEntry(pos, compat_flags, seq);
   offline_queue_len++;
   return pos;
 }
 
-void MyMesh::removeOfflineQueueHead() {
-  if (offline_queue_len <= 0) return;
-  onQueueEntryRemoved(0);
-  offline_queue_len--;
-  for (int i = 0; i < offline_queue_len; i++) {
+void MyMesh::removeOfflineQueueAt(int pos) {
+  if (pos < 0 || pos >= offline_queue_len) return;
+  onQueueEntryRemoved(pos);
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  releaseFrameStorage(offline_queue[pos]);
+#endif
+  for (int i = pos; i < offline_queue_len - 1; i++) {
     offline_queue[i] = offline_queue[i + 1];
     moveQueueAux(i, i + 1);
   }
+  offline_queue_len--;
   clearQueueAux(offline_queue_len);
+}
+
+void MyMesh::removeOfflineQueueHead() {
+  if (offline_queue_len <= 0) return;
   // Nothing to count here: the store's watermark is the oldest entry still
   // queued, taken from the queue itself by serviceOfflineStore().
+  removeOfflineQueueAt(0);
 }
 
 // The per-entry bookkeeping that travels with a queue entry when the queue shifts.
@@ -407,6 +464,235 @@ void MyMesh::resetAppSyncState() {
   _app_sync_timestamp = 0;
 }
 
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+
+bool MyMesh::canSendFrameFragments() const {
+  return _prefs.framed_packets_enabled && _app_supports_frmfrg1;
+}
+
+void MyMesh::resetFragmentTransferState() {
+  queued_fragment_id = 0;
+  queued_fragment_index = 0;
+  queued_fragment_ack_pending = false;
+}
+
+void MyMesh::resetFragmentSession() {
+  resetFragmentTransferState();
+  resetAppSyncState();
+  _app_supports_frmfrg1 = false;
+  _app_supports_mctxt = false;
+  _app_supports_mcmp = false;
+  _app_supports_aeic = false;
+  _app_supports_mcoimg = false;
+}
+
+uint16_t MyMesh::allocFragmentId() {
+  if (!next_fragment_id) next_fragment_id = 1;
+  return next_fragment_id++;
+}
+
+void MyMesh::writeFrameMaybeFragmented(const uint8_t frame[], uint16_t len, uint8_t flags) {
+  if (!_serial || !_serial->isConnected()) return;
+  if (len <= MAX_FRAME_SIZE) {
+    _serial->writeFrame(frame, len);
+    return;
+  }
+  if (!canSendFrameFragments() || len > companion_frames::MAX_ORIGINAL_LEN) {
+    // This is exactly the case where a long message arrives but its route never
+    // does: a raw feed record can exceed MAX_FRAME_SIZE, so it is dropped here
+    // unless the app declared `frmfrg1` and framed packets are enabled.
+    OQ_LOG("frame dropped: len=%u frag=%d pref=%d max=%u\n",
+           (unsigned)len, canSendFrameFragments() ? 1 : 0,
+           _prefs.framed_packets_enabled ? 1 : 0,
+           (unsigned)companion_frames::MAX_ORIGINAL_LEN);
+    MESH_DEBUG_PRINTLN("live companion frame too long: %u", len);
+    return;
+  }
+
+  const uint16_t id = allocFragmentId();
+  const uint8_t count = companion_frames::fragmentCount(len);
+  for (uint8_t index = 0; index < count; index++) {
+    uint8_t fragment[MAX_FRAME_SIZE];
+    const size_t n = companion_frames::buildFragment(fragment, sizeof(fragment), frame, len, id, index, flags);
+    if (n) _serial->writeFrame(fragment, n);
+  }
+}
+
+void MyMesh::writePacketPayloadFrameMaybeFragmented(mesh::Packet* packet, uint8_t push_code, uint8_t path_byte, const char* name) {
+  if (!_serial || !_serial->isConnected()) {
+    MESH_DEBUG_PRINTLN("%s: app offline", name);
+    return;
+  }
+  const uint16_t len = packet->payload_len + 4;
+  if (len > companion_frames::MAX_ORIGINAL_LEN) {
+    MESH_DEBUG_PRINTLN("%s: payload too long", name);
+    return;
+  }
+
+  uint8_t frame[companion_frames::MAX_ORIGINAL_LEN];
+  frame[0] = push_code;
+  frame[1] = (int8_t)(_radio->getLastSNR() * 4);
+  frame[2] = (int8_t)_radio->getLastRSSI();
+  frame[3] = path_byte;
+  memcpy(&frame[4], packet->payload, packet->payload_len);
+  writeFrameMaybeFragmented(frame, len);
+}
+
+int MyMesh::allocLongFrameSlot() {
+  for (int i = 0; i < OFFLINE_LONG_FRAME_SLOTS; i++) {
+    const uint8_t bit = 1u << i;
+    if (!(long_frame_slot_mask & bit)) {
+      long_frame_slot_mask |= bit;
+      return i;
+    }
+  }
+  return -1;
+}
+
+void MyMesh::freeLongFrameSlot(uint8_t slot) {
+  if (slot >= OFFLINE_LONG_FRAME_SLOTS) {
+    MESH_DEBUG_PRINTLN("invalid long-frame slot: %u", slot);
+    return;
+  }
+  const uint8_t bit = 1u << slot;
+  if (!(long_frame_slot_mask & bit)) {
+    MESH_DEBUG_PRINTLN("long-frame slot already free: %u", slot);
+    return;
+  }
+  long_frame_slot_mask &= ~bit;
+}
+
+uint8_t* MyMesh::frameData(Frame& frame) {
+  if (frame.len <= MAX_FRAME_SIZE) return frame.storage.inline_buf;
+  const uint8_t slot = frame.storage.long_slot;
+  if (slot >= OFFLINE_LONG_FRAME_SLOTS || !(long_frame_slot_mask & (1u << slot))) return nullptr;
+  return long_frame_pool[slot];
+}
+
+const uint8_t* MyMesh::frameData(const Frame& frame) const {
+  if (frame.len <= MAX_FRAME_SIZE) return frame.storage.inline_buf;
+  const uint8_t slot = frame.storage.long_slot;
+  if (slot >= OFFLINE_LONG_FRAME_SLOTS || !(long_frame_slot_mask & (1u << slot))) return nullptr;
+  return long_frame_pool[slot];
+}
+
+void MyMesh::releaseFrameStorage(Frame& frame) {
+  if (frame.len > MAX_FRAME_SIZE) freeLongFrameSlot(frame.storage.long_slot);
+  frame.len = 0;
+}
+
+// A long frame whose RAM slot could not be taken is stored collapsed to what a
+// legacy client can take. Returns the stored length, or 0 when the type cannot
+// be truncated safely.
+int MyMesh::buildLegacyQueuedFrame(const uint8_t* src, uint16_t len, uint8_t* dest) const {
+  if (!src || !dest || !len) return 0;
+  const uint16_t copy_len = len > MAX_FRAME_SIZE ? MAX_FRAME_SIZE : len;
+  switch (src[0]) {
+    case RESP_CODE_CONTACT_MSG_RECV:
+    case RESP_CODE_CONTACT_MSG_RECV_V3:
+    case RESP_CODE_CHANNEL_MSG_RECV:
+    case RESP_CODE_CHANNEL_MSG_RECV_V3:
+      memcpy(dest, src, copy_len);
+      return copy_len;
+    case RESP_CODE_CHANNEL_DATA_RECV:
+      if (copy_len < 9) return 0;
+      memcpy(dest, src, copy_len);
+      dest[8] = copy_len - 9;
+      return copy_len;
+    default:
+      if (len > MAX_FRAME_SIZE) return 0;
+      memcpy(dest, src, copy_len);
+      return copy_len;
+  }
+}
+
+// One app-facing representation of the queue head's original frame. When
+// `retain_source` is true the entry stays in the queue for a following derived
+// compatibility text; otherwise it leaves once the original is fully handed
+// over. A long frame is delivered as ACKed FR01 fragments. Returns the bytes to
+// send (0 when there is nothing to send this call); `stage_complete` says the
+// original has been delivered in full.
+int MyMesh::emitQueuedOriginalForApp(uint8_t frame[], bool retain_source,
+                                     bool has_ack, uint16_t ack_id,
+                                     uint8_t ack_index, bool& stage_complete) {
+  stage_complete = false;
+  if (offline_queue_len <= 0) return 0;
+  Frame& source = offline_queue[0];
+  const uint8_t* data = frameData(source);
+  if (!data) {
+    MESH_DEBUG_PRINTLN("corrupt offline long-frame slot: entry dropped");
+    removeOfflineQueueHead();
+    resetFragmentTransferState();
+    resetAppSyncState();
+    stage_complete = true;
+    return 0;
+  }
+
+  if (source.len <= MAX_FRAME_SIZE) {
+    const int result_len = source.len;
+    memcpy(frame, data, result_len);
+    if (retain_source) {
+      _app_sync_original_sent = true;
+    } else {
+      removeOfflineQueueHead();
+      resetAppSyncState();
+    }
+    resetFragmentTransferState();
+    stage_complete = true;
+    return result_len;
+  }
+
+  if (!canSendFrameFragments()) {
+    // The node setting is off or the app did not declare `frmfrg1`: collapse the
+    // long frame to what a legacy client can take.
+    const uint8_t original_type = data[0];
+    const int result_len = buildLegacyQueuedFrame(data, source.len, frame);
+    if (retain_source) {
+      _app_sync_original_sent = true;
+    } else {
+      removeOfflineQueueHead();
+      resetAppSyncState();
+    }
+    resetFragmentTransferState();
+    stage_complete = true;
+    if (!result_len) {
+      MESH_DEBUG_PRINTLN("unsafe long frame type %02X cannot be delivered to legacy app",
+                         original_type);
+    }
+    return result_len;
+  }
+
+  const uint8_t count = companion_frames::fragmentCount(source.len);
+  if (!queued_fragment_id) {
+    queued_fragment_id = allocFragmentId();
+    queued_fragment_index = 0;
+    queued_fragment_ack_pending = false;
+  }
+  if (queued_fragment_ack_pending && has_ack &&
+      ack_id == queued_fragment_id && ack_index == queued_fragment_index) {
+    queued_fragment_ack_pending = false;
+    if (++queued_fragment_index >= count) {
+      if (retain_source) {
+        _app_sync_original_sent = true;
+      } else {
+        removeOfflineQueueHead();
+        resetAppSyncState();
+      }
+      resetFragmentTransferState();
+      stage_complete = true;
+      return 0;
+    }
+  }
+
+  const size_t result_len = companion_frames::buildFragment(
+      frame, MAX_FRAME_SIZE, data, source.len, queued_fragment_id,
+      queued_fragment_index, companion_frames::FLAG_QUEUED);
+  queued_fragment_ack_pending = result_len > 0;
+  return (int)result_len;
+}
+
+#endif  // WITH_COMPANION_FRAME_FRAGMENTS
+
 // Canonical queue frames are stored in the v3 layout (SNR + two reserved bytes).
 // A legacy app (< v3) gets the collapse here: rewrite the code (16->7, 17->8)
 // and drop the three bytes after it. Returns the new length, or 0 when the
@@ -463,6 +749,18 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   // kept with the queued message itself (keepRoute), not here: only the copy that
   // produced a message matters, and this runs for every packet on the air.
   if (!_serial || !_serial->isConnected()) return;
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  if (log_len + 3 <= companion_frames::MAX_ORIGINAL_LEN) {
+    uint8_t frame[companion_frames::MAX_ORIGINAL_LEN];
+    int i = 0;
+    frame[i++] = PUSH_CODE_LOG_RX_DATA;
+    frame[i++] = (int8_t)(snr * 4);
+    frame[i++] = (int8_t)(rssi);
+    memcpy(&frame[i], log_raw, log_len);
+    i += log_len;
+    writeFrameMaybeFragmented(frame, i);
+  }
+#else
   if (log_len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
@@ -473,6 +771,7 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 
     _serial->writeFrame(out_frame, i);
   }
+#endif
 }
 
 // The offline store lives in a filesystem: one small file per record, plus one
@@ -686,7 +985,7 @@ void MyMesh::serviceOfflineStore() {
         break;
       }
       budget--;
-      const uint8_t* data = offline_queue[pos].buf;
+      const uint8_t* data = frameData(offline_queue[pos]);
       const uint16_t len = (uint16_t)offline_queue[pos].len;
       if (!data || len == 0 || len > OFFLINE_STORE_MAX_FRAME) {
         offline_queue_store_pending[pos] = 0;
@@ -822,6 +1121,9 @@ void MyMesh::emitQueuedRoute(int pos) {
   }
   if (len < 3) return;   // snr, rssi and at least a packet header
   frame[0] = PUSH_CODE_LOG_RX_DATA;
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  writeFrameMaybeFragmented(frame, (uint16_t)(len + 1));
+#else
   if (len + 1 <= MAX_FRAME_SIZE) {
     _serial->writeFrame(frame, len + 1);
   } else {
@@ -830,6 +1132,7 @@ void MyMesh::emitQueuedRoute(int pos) {
            (unsigned long)offline_queue_seq[pos], (unsigned)(len + 1));
     return;
   }
+#endif
   OQ_LOG("route: seq=%lu sent len=%u\n", (unsigned long)offline_queue_seq[pos], (unsigned)len);
 }
 #endif
@@ -969,37 +1272,44 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  uint8_t frame[companion_frames::MAX_ORIGINAL_LEN];
+  int frame_cap = _prefs.framed_packets_enabled ? companion_frames::MAX_ORIGINAL_LEN : MAX_FRAME_SIZE;
+#else
+  uint8_t* frame = out_frame;
+  const int frame_cap = MAX_FRAME_SIZE;
+#endif
   int i = 0;
   // Queue in the canonical v3 layout regardless of the connected app; a legacy
   // app (< v3) gets the v3 -> legacy collapse at delivery (CMD_SYNC_NEXT_MESSAGE).
-  out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
-  out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
-  out_frame[i++] = 0; // reserved1
-  out_frame[i++] = 0; // reserved2
-  memcpy(&out_frame[i], from.id.pub_key, 6);
+  frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
+  frame[i++] = (int8_t)(pkt->getSNR() * 4);
+  frame[i++] = 0; // reserved1
+  frame[i++] = 0; // reserved2
+  memcpy(&frame[i], from.id.pub_key, 6);
   i += 6; // just 6-byte prefix
   // The app gets the packed byte (low 6 bits = hop count, top 2 = hash size - 1),
   // same as upstream: it decodes both fields out of it. Our own display wants
   // just the hop count, or it renders "[64]" for a 2-byte-hash sender.
-  out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+  frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
   uint8_t path_len = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
-  out_frame[i++] = txt_type;
-  memcpy(&out_frame[i], &sender_timestamp, 4);
+  frame[i++] = txt_type;
+  memcpy(&frame[i], &sender_timestamp, 4);
   i += 4;
   if (extra_len > 0) {
-    memcpy(&out_frame[i], extra, extra_len);
+    memcpy(&frame[i], extra, extra_len);
     i += extra_len;
   }
   int tlen = strlen(text); // TODO: UTF-8 ??
-  if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
-  memcpy(&out_frame[i], text, tlen);
+  if (i + tlen > frame_cap) tlen = frame_cap - i;
+  memcpy(&frame[i], text, tlen);
   i += tlen;
-  addToOfflineQueue(out_frame, i);
+  addToOfflineQueue(frame, i);
 
   if (_serial->isConnected()) {
-    uint8_t frame[1];
-    frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
-    _serial->writeFrame(frame, 1);
+    uint8_t notification_frame[1];
+    notification_frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
+    _serial->writeFrame(notification_frame, 1);
   }
 
 #ifdef DISPLAY_CLASS
@@ -1126,33 +1436,40 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
     else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
   }
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  uint8_t frame[companion_frames::MAX_ORIGINAL_LEN];
+  int frame_cap = _prefs.framed_packets_enabled ? companion_frames::MAX_ORIGINAL_LEN : MAX_FRAME_SIZE;
+#else
+  uint8_t* frame = out_frame;
+  const int frame_cap = MAX_FRAME_SIZE;
+#endif
   int i = 0;
   // Queue in the canonical v3 layout (see queueMessage).
-  out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
-  out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
-  out_frame[i++] = 0; // reserved1
-  out_frame[i++] = 0; // reserved2
+  frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+  frame[i++] = (int8_t)(pkt->getSNR() * 4);
+  frame[i++] = 0; // reserved1
+  frame[i++] = 0; // reserved2
 
   uint8_t channel_idx = findChannelIdx(channel);
   {
     ChannelDetails ch;
     if (getChannel(channel_idx, ch) && strcmp(ch.name, "TerminalCLI") == 0) return;
   }
-  out_frame[i++] = channel_idx;
+  frame[i++] = channel_idx;
   // The app gets the packed byte (low 6 bits = hop count, top 2 = hash size - 1),
   // same as upstream: it decodes both fields out of it. Our own display wants
   // just the hop count, or it renders "[64]" for a 2-byte-hash sender.
-  out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+  frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
   uint8_t path_len = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
 
-  out_frame[i++] = TXT_TYPE_PLAIN;
-  memcpy(&out_frame[i], &timestamp, 4);
+  frame[i++] = TXT_TYPE_PLAIN;
+  memcpy(&frame[i], &timestamp, 4);
   i += 4;
   int tlen = strlen(text); // TODO: UTF-8 ??
-  if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
-  memcpy(&out_frame[i], text, tlen);
+  if (i + tlen > frame_cap) tlen = frame_cap - i;
+  memcpy(&frame[i], text, tlen);
   i += tlen;
-  const int queued_at = addToOfflineQueue(out_frame, i);
+  const int queued_at = addToOfflineQueue(frame, i);
 #if WITH_OFFLINE_ROUTES
   keepRoute(queued_at, pkt);
 #else
@@ -1160,9 +1477,9 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
 #endif
 
   if (_serial->isConnected()) {
-    uint8_t frame[1];
-    frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
-    _serial->writeFrame(frame, 1);
+    uint8_t notification_frame[1];
+    notification_frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
+    _serial->writeFrame(notification_frame, 1);
   } else {
 #ifdef DISPLAY_CLASS
     if (_ui) _ui->notify(UIEventType::channelMessage);
@@ -1460,6 +1777,9 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  writePacketPayloadFrameMaybeFragmented(packet, PUSH_CODE_CONTROL_DATA, packet->path_len, "onControlDataRecv");
+#else
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -1477,9 +1797,13 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
   } else {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), data received while app offline");
   }
+#endif
 }
 
 void MyMesh::onRawDataRecv(mesh::Packet *packet) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  writePacketPayloadFrameMaybeFragmented(packet, PUSH_CODE_RAW_DATA, 0xFF, "onRawDataRecv");
+#else
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onRawDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -1497,6 +1821,7 @@ void MyMesh::onRawDataRecv(mesh::Packet *packet) {
   } else {
     MESH_DEBUG_PRINTLN("onRawDataRecv(), data received while app offline");
   }
+#endif
 }
 
 void MyMesh::onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code, uint8_t flags,
@@ -1561,6 +1886,12 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   app_session = 0;
 #endif
   resetAppSyncState();
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  _app_supports_frmfrg1 = false;
+  next_fragment_id = 1;
+  long_frame_slot_mask = 0;
+  resetFragmentTransferState();
+#endif
   app_target_ver = 0;
   clearPendingReqs();
   next_ack_idx = 0;
@@ -1696,6 +2027,9 @@ void MyMesh::begin(bool has_display) {
   _prefs.ui_mcmp_detect_off = constrain(_prefs.ui_mcmp_detect_off, 0, 1);
   _prefs.ui_aeic_detect_off = constrain(_prefs.ui_aeic_detect_off, 0, 1);
   _prefs.ui_mcoimg_detect_off = constrain(_prefs.ui_mcoimg_detect_off, 0, 1);
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  _prefs.framed_packets_enabled = constrain(_prefs.framed_packets_enabled, 0, 1);
+#endif
   _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
   _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
 #ifdef BLE_PIN_CODE // 123456 by default
@@ -1806,7 +2140,11 @@ bool MyMesh::isValidClientRepeatFreq(uint32_t f) const {
 }
 
 void MyMesh::startInterface(BaseSerialInterface &serial) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  resetFragmentSession();
+#else
   resetAppSyncState();
+#endif
   _serial = &serial;
   serial.enable();
   _serial_was_connected = serial.isConnected();
@@ -1838,13 +2176,26 @@ void MyMesh::handleCmdFrame(size_t len) {
     //  cmd_frame[1..7]  reserved future
     char *app_name = (char *)&cmd_frame[8];
     cmd_frame[len] = 0; // make app_name null terminated
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+    resetFragmentSession();
+    _app_supports_frmfrg1 = companion_app::hasCapability(&cmd_frame[8], len - 8, "frmfrg1");
+#else
     resetAppSyncState();
+#endif
     MESH_DEBUG_PRINTLN("App %s connected", app_name);
     _app_supports_mctxt = companion_app::hasCapability(&cmd_frame[8], len - 8, "mctxt");
     _app_supports_mcmp = companion_app::hasCapability(&cmd_frame[8], len - 8, "mcmp");
     _app_supports_aeic = companion_app::hasCapability(&cmd_frame[8], len - 8, "aeic") ||
                          companion_app::appNameIsMeshCoreOpen(&cmd_frame[8], len - 8);
     _app_supports_mcoimg = companion_app::hasCapability(&cmd_frame[8], len - 8, "mcimg");
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+    // The two conditions that decide whether a long frame (a route record, for
+    // one) can be delivered at all. Logged here because "the message came but
+    // its route did not" is otherwise indistinguishable from a node that never
+    // heard the frame.
+    OQ_LOG("app start: frmfrg1=%d framed_pref=%d\n",
+           _app_supports_frmfrg1 ? 1 : 0, _prefs.framed_packets_enabled ? 1 : 0);
+#endif
 #if WITH_OFFLINE_ROUTES
     // A new app session: routes this node pushed live to an earlier one are owed
     // to this one again (the client forgets them on disconnect).
@@ -2224,7 +2575,26 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+    // Parse the ACK before anything else: a stale but well-formed ACK must be
+    // ignored rather than turned into an error, and a malformed one rejected.
+    const uint8_t flags = len >= 2 ? cmd_frame[1] : 0;
+    if (flags & ~SYNC_FLAG_FRAGMENT_ACK) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      return;
+    }
+    const bool has_fragment_ack = (flags & SYNC_FLAG_FRAGMENT_ACK) != 0;
+    if (has_fragment_ack && len < 5) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      return;
+    }
+    const uint16_t ack_fragment_id = has_fragment_ack
+        ? (uint16_t)cmd_frame[2] | ((uint16_t)cmd_frame[3] << 8) : 0;
+    const uint8_t ack_fragment_index = has_fragment_ack ? cmd_frame[4] : 0;
+    int out_len = getNextAppFrame(out_frame, has_fragment_ack, ack_fragment_id, ack_fragment_index);
+#else
     int out_len = getNextAppFrame(out_frame);
+#endif
     if (out_len > 0) {
       if (app_target_ver < 3) {
         const int legacy_len = convertV3FrameToLegacy(out_frame, out_len, out_frame);
@@ -3149,7 +3519,11 @@ void MyMesh::loop() {
   // delivery midway, the original queue entry is removed, and the message is
   // lost.
   bool app_connected = _serial && _serial->isConnected();
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  if (_serial_was_connected && !app_connected) resetFragmentSession();
+#else
   if (_serial_was_connected && !app_connected) resetAppSyncState();
+#endif
   _serial_was_connected = app_connected;
 
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at) &&
@@ -3622,6 +3996,17 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     strcpy(buf, "mcoimg.detect: off");
 #endif
 
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  } else if (strcmp(cmd, "get framed.packets") == 0) {
+    snprintf(buf, 512, "framed.packets: %s", isFramedPacketsEnabled() ? "on" : "off");
+  } else if (strcmp(cmd, "set framed.packets on") == 0) {
+    setFramedPacketsEnabled(true);
+    strcpy(buf, "framed.packets: on");
+  } else if (strcmp(cmd, "set framed.packets off") == 0) {
+    setFramedPacketsEnabled(false);
+    strcpy(buf, "framed.packets: off");
+#endif
+
 #ifdef WITH_WIFI_SWITCHING
   } else if (strcmp(cmd, "wifi list") == 0) {
     if (_wifi_prefs.network_count == 0) {
@@ -3952,12 +4337,19 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
   part_count = 0;
   additive = false;
 
+  const uint8_t* const frame_bytes = frameData(source);
+  if (!frame_bytes) return 0;
+
   CompatTextFrameLayout layout;
-  if (compatTextFrameLayout(source.buf, source.len, layout)) {
+  if (compatTextFrameLayout(frame_bytes, source.len, layout)) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+    char original[companion_frames::MAX_ORIGINAL_LEN + 1];
+#else
     char original[MAX_FRAME_SIZE + 1];
+#endif
     const size_t original_length = source.len - layout.header_length;
     if (original_length + 1 > sizeof(original)) return 0;
-    memcpy(original, source.buf + layout.header_length, original_length);
+    memcpy(original, frame_bytes + layout.header_length, original_length);
     original[original_length] = '\0';
 
     mco_compat::Options options = { false, false, false };
@@ -3983,18 +4375,18 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
         original, layout.has_sender_name, transformed, transformed_capacity, options);
     if (!result.changed) return 0;
     if (prefix_length > result.length) return 0;
-    return formatCompatPart(source.buf, layout.header_length,
+    return formatCompatPart(frame_bytes, layout.header_length,
                             transformed, prefix_length,
                             transformed + prefix_length,
                             result.length - prefix_length,
                             part_index, part_count, output);
   }
 
-  if (source.len < 9 || source.buf[0] != RESP_CODE_CHANNEL_DATA_RECV) return 0;
-  const uint16_t data_type = (uint16_t)source.buf[6] | ((uint16_t)source.buf[7] << 8);
-  const size_t data_length = source.buf[8];
+  if (source.len < 9 || frame_bytes[0] != RESP_CODE_CHANNEL_DATA_RECV) return 0;
+  const uint16_t data_type = (uint16_t)frame_bytes[6] | ((uint16_t)frame_bytes[7] << 8);
+  const size_t data_length = frame_bytes[8];
   if (9 + data_length > source.len) return 0;
-  const uint8_t* data = source.buf + 9;
+  const uint8_t* data = frame_bytes + 9;
 
   const char* body = nullptr;
   size_t body_length = 0;
@@ -4088,14 +4480,14 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
   size_t header_length = 0;
   if (app_target_ver >= 3) {
     header[header_length++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
-    header[header_length++] = source.buf[1];
+    header[header_length++] = frame_bytes[1];
     header[header_length++] = 0;
     header[header_length++] = 0;
   } else {
     header[header_length++] = RESP_CODE_CHANNEL_MSG_RECV;
   }
-  header[header_length++] = source.buf[4];  // channel index
-  header[header_length++] = source.buf[5];  // packed path length
+  header[header_length++] = frame_bytes[4];  // channel index
+  header[header_length++] = frame_bytes[5];  // packed path length
   header[header_length++] = TXT_TYPE_PLAIN;
   memcpy(header + header_length, &timestamp, sizeof(timestamp));
   header_length += sizeof(timestamp);
@@ -4104,6 +4496,75 @@ int MyMesh::renderCompatFramePart(const Frame& source, size_t part_index,
                           body, body_length, part_index, part_count, output);
 }
 
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+int MyMesh::getNextAppFrame(uint8_t frame[], bool has_ack, uint16_t ack_id,
+                            uint8_t ack_index) {
+  while (true) {
+    if (!_app_sync_active) {
+      if (offline_queue_len <= 0) return 0;
+      _app_sync_active = true;
+      _app_sync_original_sent = false;
+      _app_sync_next_part = 0;
+      _app_sync_timestamp = (uint32_t)getRTCClock()->getCurrentTime();
+    }
+
+    Frame& source = offline_queue[0];
+    const uint8_t* source_data = frameData(source);
+    if (!source_data) {
+      bool ignored = false;
+      emitQueuedOriginalForApp(frame, false, has_ack, ack_id, ack_index, ignored);
+      continue;
+    }
+#if WITH_OFFLINE_ROUTES
+    // The route goes out first, once per entry: a client binds a raw channel copy
+    // to the message that arrives after it. Not before the check above — a route
+    // pushed for an entry that is then dropped would bind to the next message.
+    if (!_app_sync_route_sent) {
+      _app_sync_route_sent = true;
+      emitQueuedRoute(0);
+    }
+#endif
+    size_t part_count = 0;
+    bool additive = false;
+    const int transformed_length = renderCompatFramePart(
+        source, _app_sync_next_part, part_count, additive, frame);
+
+    if (additive && !_app_sync_original_sent) {
+      bool stage_complete = false;
+      const int original_len = emitQueuedOriginalForApp(
+          frame, true, has_ack, ack_id, ack_index, stage_complete);
+      if (original_len > 0) return original_len;
+      if (!stage_complete) return 0;
+      has_ack = false;
+      continue;
+    }
+
+    if (part_count == 0 || transformed_length <= 0) {
+      if (_app_sync_original_sent) {
+        removeOfflineQueueHead();
+        resetFragmentTransferState();
+        resetAppSyncState();
+        continue;
+      }
+      bool stage_complete = false;
+      const int original_len = emitQueuedOriginalForApp(
+          frame, false, has_ack, ack_id, ack_index, stage_complete);
+      if (original_len > 0) return original_len;
+      if (!stage_complete) return 0;
+      has_ack = false;
+      continue;
+    }
+
+    _app_sync_next_part++;
+    if (_app_sync_next_part >= part_count) {
+      removeOfflineQueueHead();
+      resetFragmentTransferState();
+      resetAppSyncState();
+    }
+    return transformed_length;
+  }
+}
+#else
 int MyMesh::getNextAppFrame(uint8_t frame[]) {
   while (true) {
     if (!_app_sync_active) {
@@ -4155,6 +4616,7 @@ int MyMesh::getNextAppFrame(uint8_t frame[]) {
     return transformed_length;
   }
 }
+#endif
 
 void MyMesh::setMCOtxtEnabled(bool enabled) {
 #ifdef WITH_MCOTXT
@@ -4225,6 +4687,14 @@ void MyMesh::setMCOimgDetectEnabled(bool enabled) {
 #endif
 }
 
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+void MyMesh::setFramedPacketsEnabled(bool enabled) {
+  _prefs.framed_packets_enabled = enabled ? 1 : 0;
+  if (!enabled) resetFragmentTransferState();
+  deferSavePrefs();
+}
+#endif
+
 #ifdef WITH_WIFI_SWITCHING
 
 void MyMesh::loadWifiPrefs() {
@@ -4276,6 +4746,9 @@ void MyMesh::removeWifiNetwork(const char* ssid) {
 }
 
 void MyMesh::switchCommsMode(uint8_t mode, int wifi_net_idx) {
+#ifdef WITH_COMPANION_FRAME_FRAGMENTS
+  resetFragmentSession();
+#endif
   if (_serial) _serial->disable();
 
   _wifi_prefs.comms_mode = mode;

@@ -120,6 +120,7 @@ public:
   uint8_t  ui_mcmp_detect_off = 0;   // 0 = show/forward MCMP placeholders
   uint8_t  ui_aeic_detect_off = 0;   // 0 = show/forward AEIC placeholders
   uint8_t  ui_mcoimg_detect_off = 0; // 0 = show/forward MCOimg placeholders
+  uint8_t  framed_packets_enabled = 1; // 0 = never fragment long companion frames
 
 private:
   class RadioPrefs : public ConfigSerializer {
@@ -256,6 +257,7 @@ private:
       def("mcmp_det_off", _parent->ui_mcmp_detect_off);
       def("aeic_det_off", _parent->ui_aeic_detect_off);
       def("mcoimg_det_off", _parent->ui_mcoimg_detect_off);
+      def("framed_pkt", _parent->framed_packets_enabled);
     }
   public:
     UIPrefs(NodePrefs* parent) : _parent(parent) { }
