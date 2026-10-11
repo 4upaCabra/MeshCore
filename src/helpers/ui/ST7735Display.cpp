@@ -580,6 +580,7 @@ void ST7735Display::setCursor(int x, int y) {
   // A GFX font is drawn from its baseline, the built-in one from its top-left.
   // The rest of the UI passes a top-left y, so shift it down by the cap height
   // (7px at scale 1) to keep both paths landing in the same place.
+  _cursor_y_raw = y;   // printWordWrap() in DisplayDriver tracks lines by it
   sprite->setCursor(x*SCALE_X, (y + _font_size * 7)*SCALE_Y);
 #else
   sprite->setCursor(x*SCALE_X, y*SCALE_Y);
