@@ -335,15 +335,16 @@ public:
     display.setColor(UIColor::primary_txt);
     display.drawTextCentered(cx, y, "Cal ADC");
     y += lh;
-    snprintf(buf, sizeof(buf), "%u.%02uV>%u.%02uV",
-             c.mv / 1000, (c.mv % 1000) / 10, c.target_mv / 1000, (c.target_mv % 1000) / 10);
+    snprintf(buf, sizeof(buf), "%u.%02uV>%u.%02uV%s",
+             c.mv / 1000, (c.mv % 1000) / 10, c.target_mv / 1000, (c.target_mv % 1000) / 10,
+             c.target_ina ? " INA" : "");
     display.drawTextCentered(cx, y, buf);
     y += lh;
     snprintf(buf, sizeof(buf), "k %.3f>%.3f", c.old_k, c.new_k);
     display.drawTextCentered(cx, y, buf);
     y += lh;
     const char* note = c.statusText();
-    if (!note && AdcCalibration::usbKnown() && !board.isExternalPowered())
+    if (!note && AdcCalibration::usbKnown() && !c.target_ina && !board.isExternalPowered())
       note = "No USB power";
     if (note) {
       display.setColor(UIColor::warning_txt);
@@ -994,7 +995,7 @@ public:
               static const int log_vals[3] = { 16, 32, 64 };
               snprintf(val, sizeof(val), "%d", log_vals[constrain(_node_prefs->ui_max_log_idx, 0, 2)]);
             } else if (i == SETTINGS_ADC_IDX) {
-              uint16_t mv = board.getBattMilliVolts();
+              uint16_t mv = board.getBattAdcMilliVolts();
               snprintf(val, sizeof(val), "%u.%02uV", mv / 1000, (mv % 1000) / 10);
             }
             display.drawTextRightAlign(display.width() - 2, y, val);

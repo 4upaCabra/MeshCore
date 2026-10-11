@@ -2,20 +2,16 @@
 
 #include <Arduino.h>
 #include <MeshCore.h>
+#include <helpers/BatteryPack.h>
 #include <helpers/NodePrefs.h>
-
-// Pack voltage at 100% — same default the battery indicator uses.
-#ifndef BATT_MAX_MILLIVOLTS
-  #define BATT_MAX_MILLIVOLTS 4200
-#endif
 
 // Battery-ADC calibration from the device menu (Settings → Cal ADC).
 //
 // The user charges the device until full and opens the item; we measure the
-// divider, assume the pack sits at BATT_MAX_MILLIVOLTS (4.20 V for Li-ion) and
-// rescale the multiplier so the reading lands there. mV = k × raw on every
-// board that supports a multiplier, so the new k is simply
-// old_k × target / measured — no raw ADC access needed.
+// divider, assume the pack sits at its 100% voltage (4.20 V for Li-ion, from
+// the active BatteryPack profile) and rescale the multiplier so the reading
+// lands there. mV = k × raw on every board that supports a multiplier, so the
+// new k is simply old_k × target / measured — no raw ADC access needed.
 //
 // A fully charged cell is 4.20 V only while the charger holds it in CV; after
 // termination it relaxes towards ~4.1 V. So this is a coarse calibration. A
@@ -33,6 +29,7 @@ struct AdcCalibration {
 
   uint16_t mv        = 0;      // reading with the current multiplier
   uint16_t target_mv = 0;      // what it should read
+  bool     target_ina = false; // target taken from a fresh INA pack reading
   float    old_k = 0.0f, new_k = 0.0f;
   Status   status = NO_READING;
   uint8_t  sel = CANCEL;       // highlighted action; Cancel first, so a stray click is harmless
@@ -50,13 +47,14 @@ struct AdcCalibration {
 #endif
   }
 
-  // Average of several reads. 0 when the board gave nothing usable.
+  // Average of several fresh reads. 0 when the board gave nothing usable.
   static uint16_t readFresh(mesh::MainBoard& board, uint16_t* spread = nullptr) {
     uint32_t sum = 0;
     uint16_t lo = 0xFFFF, hi = 0;
     int n = 0;
     for (int r = 0; r < ROUNDS; r++) {
-      uint16_t v = board.getBattMilliVolts();
+      board.invalidateBatteryRead();
+      uint16_t v = board.getBattAdcMilliVolts();
       if (v > 0) {
         sum += v; n++;
         if (v < lo) lo = v;
@@ -73,7 +71,10 @@ struct AdcCalibration {
     old_k = board.getAdcMultiplier();
     uint16_t spread = 0;
     mv = readFresh(board, &spread);
-    target_mv = BATT_MAX_MILLIVOLTS;
+
+    uint16_t ina_mv = 0;
+    target_ina = BatteryPack::hasFreshPackMilliVolts(ina_mv);
+    target_mv = target_ina ? ina_mv : BatteryPack::fullMilliVolts();
 
     new_k = old_k;
     if (mv == 0) { status = NO_READING; return; }
@@ -117,17 +118,20 @@ struct AdcCalibration {
     if (sel == RESET) {
       prefs.adc_multiplier = 0.0f;
       board.setAdcMultiplier(0.0f);
+      board.invalidateBatteryRead();
       return RESTORED;
     }
     if (sel != APPLY || !canApply()) return CANCELLED;
 
     float saved = prefs.adc_multiplier;
     board.setAdcMultiplier(new_k);
+    board.invalidateBatteryRead();
     uint16_t check = readFresh(board);
     int err = (int)check - (int)target_mv;
     if (err < 0) err = -err;
     if (check == 0 || err > (int)target_mv * 3 / 100) {
       board.setAdcMultiplier(saved);
+      board.invalidateBatteryRead();
       return NO_EFFECT;
     }
     prefs.adc_multiplier = new_k;
