@@ -17,6 +17,7 @@ class E213Display : public DisplayDriver {
   CRC32 display_crc;
   uint32_t last_display_crc_value = 0;
   uint8_t _partial_refresh_count = 0;
+  bool _suppress_full_refresh = false;
   uint16_t _color;
 
 public:
@@ -28,8 +29,8 @@ public:
   }
   bool begin();
   bool isEink() const override { return true; }
+  void setFullRefreshSuppressed(bool s) override { _suppress_full_refresh = s; }
   bool isOn() override { return _isOn; }
-  bool isEink() override { return true; }
   void turnOn() override;
   void turnOff() override;
   void clear() override;

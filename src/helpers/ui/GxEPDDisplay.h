@@ -111,7 +111,6 @@ public:
   void waitRefreshIdle(uint32_t max_ms = 12000) override;
 #endif
   bool isOn() override { return _isOn; }
-  bool isEink() override { return true; }
   void turnOn() override;
   void turnOff() override;
   void clear() override;

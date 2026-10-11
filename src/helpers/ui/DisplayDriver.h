@@ -48,7 +48,6 @@ public:
   virtual void waitRefreshIdle(uint32_t max_ms = 12000) { (void)max_ms; }
 #endif
   virtual bool isOn() = 0;
-  virtual bool isEink() { return false; } // default to non-eink, override in eink drivers
   virtual void turnOn() = 0;
   virtual void turnOff() = 0;
   virtual void clear() = 0;

@@ -257,13 +257,14 @@ void E213Display::endFrame() {
   if (crc != last_display_crc_value) {
     last_display_crc_value = crc;
     displayPowerHoldBegin();
-    if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
+    if (!_suppress_full_refresh && ++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
       display->fastmodeOff();
       display->update();
       display->fastmodeOn();
       _partial_refresh_count = 0;
       last_display_crc_value = ~crc;  // force re-draw: fastmodeOn may blank the panel
     } else {
+      if (_suppress_full_refresh) _partial_refresh_count = 0;
       display->update();
     }
     displayPowerHoldEnd();
