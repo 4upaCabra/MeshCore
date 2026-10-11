@@ -1,5 +1,7 @@
 #include "MyMesh.h"
 
+#include "OfflineRoutePolicy.h"
+
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
 #include <helpers/CompanionAppCapabilities.h>
@@ -1047,7 +1049,7 @@ int MyMesh::findPoolRoute(uint32_t seq) const {
 void MyMesh::keepRoute(int pos, const mesh::Packet* pkt) {
   if (pos < 0 || pos >= offline_queue_len || !pkt || !pkt->isRouteFlood()) return;
   const uint8_t type = pkt->getPayloadType();
-  if (type != PAYLOAD_TYPE_GRP_TXT && type != PAYLOAD_TYPE_GRP_DATA) return;
+  if (!offline_route::keep(type)) return;
 
   uint8_t raw[MAX_TRANS_UNIT + 1];
   int len = pkt->writeTo(raw);
@@ -1120,6 +1122,9 @@ void MyMesh::emitQueuedRoute(int pos) {
     if (offline_store.get(offline_queue_seq[pos], r, nullptr, &frame[1])) len = r.route_len;
   }
   if (len < 3) return;   // snr, rssi and at least a packet header
+  const uint8_t hdr = frame[3];   // raw packet header, after snr and rssi
+  const uint8_t type = (uint8_t)((hdr >> PH_TYPE_SHIFT) & PH_TYPE_MASK);
+  if (!offline_route::deliver(type, _app_info, _app_info_len)) return;
   frame[0] = PUSH_CODE_LOG_RX_DATA;
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
   writeFrameMaybeFragmented(frame, (uint16_t)(len + 1));
@@ -2143,6 +2148,7 @@ bool MyMesh::isValidClientRepeatFreq(uint32_t f) const {
 }
 
 void MyMesh::startInterface(BaseSerialInterface &serial) {
+  _app_info_len = 0;
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
   resetFragmentSession();
 #else
@@ -2179,6 +2185,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     //  cmd_frame[1..7]  reserved future
     char *app_name = (char *)&cmd_frame[8];
     cmd_frame[len] = 0; // make app_name null terminated
+    // Keep the bytes after the 8-byte header (app name and its capability list)
+    // for offline_route::deliver(): truncate if longer than the buffer.
+    const size_t app_info_len = len - 8;
+    _app_info_len = (uint8_t)(app_info_len > sizeof(_app_info) ? sizeof(_app_info) : app_info_len);
+    memcpy(_app_info, &cmd_frame[8], _app_info_len);
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
     resetFragmentSession();
     _app_supports_frmfrg1 = companion_app::hasCapability(&cmd_frame[8], len - 8, "frmfrg1");
@@ -3527,6 +3538,7 @@ void MyMesh::loop() {
 #else
   if (_serial_was_connected && !app_connected) resetAppSyncState();
 #endif
+  if (_serial_was_connected && !app_connected) _app_info_len = 0;
   _serial_was_connected = app_connected;
 
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at) &&

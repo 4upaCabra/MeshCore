@@ -594,6 +594,11 @@ private:
   bool                   _app_supports_mcmp = false;
   bool                   _app_supports_aeic = false;
   bool                   _app_supports_mcoimg = false;
+  // Bytes the current app sent in CMD_APP_START after its 8-byte header (app
+  // name and capability list), for offline_route::deliver(); empty between
+  // sessions. Truncated if longer than the buffer.
+  uint8_t                _app_info[48];
+  uint8_t                _app_info_len = 0;
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
   // The current CMD_APP_START declared `frmfrg1`; false until declared.
   bool                   _app_supports_frmfrg1 = false;
