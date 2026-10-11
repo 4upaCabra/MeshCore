@@ -56,6 +56,9 @@ void BaseChatMesh::sendAckTo(const ContactInfo& dest, const uint8_t* ack_hash, u
 }
 
 void BaseChatMesh::bootstrapRTCfromContacts() {
+  // Skip if RTC is already reliable (e.g. DS3231 with battery backup)
+  if (getRTCClock()->isTimeReliable()) return;
+
   uint32_t latest = 0;
   for (int i = 0; i < num_contacts; i++) {
     if (contacts[i].lastmod > latest) {
