@@ -9,6 +9,11 @@ on:
       release_title_prefix:
         required: true
         type: string
+      # Set by a manual run: the release version, used instead of the tag's.
+      version:
+        required: false
+        type: string
+        default: ''
 
 jobs:
 
@@ -66,7 +71,7 @@ jobs:
 
       - name: Build Firmware
         env:
-          FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
+          FIRMWARE_VERSION: ${{ inputs.version != '' && inputs.version || env.GIT_TAG_VERSION }}
         run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
 
       - name: Upload Workflow Artifacts
@@ -78,7 +83,8 @@ jobs:
   create-release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') # only create release for tagged builds
+    # tagged builds, and manual runs given a version
+    if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
     steps:
 
       - name: Clone Repo
@@ -96,7 +102,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          name: "${{ inputs.release_title_prefix }} ${{ env.GIT_TAG_VERSION }}"
+          name: "${{ inputs.release_title_prefix }} ${{ inputs.version != '' && inputs.version || env.GIT_TAG_VERSION }}"
+          # A manual run names the tag the draft will create when it is published.
+          tag_name: ${{ inputs.version != '' && format('{0}-{1}', inputs.firmware_type, inputs.version) || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           body: ""
           draft: true
           files: out/*

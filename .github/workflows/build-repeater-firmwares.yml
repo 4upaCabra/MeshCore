@@ -4,7 +4,15 @@ permissions:
   contents: write
 
 on:
+  # A manual run with a version builds the release images and prepares a draft
+  # release with them; GitHub creates the tag when the draft is published, so the
+  # images are built once. Without a version it is a test build only.
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. v1.17.1b3 (empty: test build, no release)'
+        required: false
+        default: ''
   push:
     tags:
       - 'repeater-*'
@@ -15,3 +23,4 @@ jobs:
     with:
       firmware_type: 'repeater'
       release_title_prefix: 'Repeater Firmware'
+      version: ${{ inputs.version }}
