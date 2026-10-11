@@ -307,6 +307,11 @@ public:
   void initCommsFromPrefs();
 #endif
 
+  // Whether the interface actually carrying the app link is connected. In
+  // WITH_WIFI_SWITCHING builds MyMesh owns the transport and interface_manager
+  // registers nothing, so its isConnected() is always false there.
+  bool isAppConnected() const { return _serial != nullptr && _serial->isConnected(); }
+
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
     sensors.setSettingValue("gps", _prefs.gps_enabled ? "1" : "0");

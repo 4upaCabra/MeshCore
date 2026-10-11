@@ -248,7 +248,7 @@ static bool esp32_pm_wantsAwake() {
     if (esp32_usbHostPresent()) return true;
   #endif
   if (the_mesh.getNodePrefs()->power_mode == POWER_MODE_CONSERVATIVE
-      && interface_manager.isConnected()) {
+      && the_mesh.isAppConnected()) {
     return true;
   }
   #if ENV_INCLUDE_GPS == 1
@@ -606,7 +606,7 @@ void loop() {
     // AUTO is what this platform always did.
     const uint8_t power_mode = the_mesh.getNodePrefs()->power_mode;
     if (power_mode != POWER_MODE_OFF
-        && (power_mode != POWER_MODE_CONSERVATIVE || !interface_manager.isConnected())) {
+        && (power_mode != POWER_MODE_CONSERVATIVE || !the_mesh.isAppConnected())) {
       board.sleep(0);
     }
 #elif defined(ESP32) && defined(WITH_ESP32_POWER_SAVING) && ESP32_PM_LIGHT_SLEEP
