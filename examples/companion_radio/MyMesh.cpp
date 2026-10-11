@@ -304,48 +304,105 @@ bool MyMesh::Frame::isChannelMsg() const {
          buf[0] == RESP_CODE_CHANNEL_DATA_RECV;
 }
 
-void MyMesh::addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags) {
+int MyMesh::addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags, uint32_t seq) {
   // Frame::buf holds MAX_FRAME_SIZE bytes: a longer frame would overflow it and
   // a non-positive length makes no sense.
-  if (!frame || len <= 0 || len > MAX_FRAME_SIZE) return;
+  if (!frame || len <= 0 || len > MAX_FRAME_SIZE) return -1;
   if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
     MESH_DEBUG_PRINTLN("WARN: offline_queue is full!");
     // A multi-part conversion keeps its original raw frame at queue[0] until
     // the final part is delivered. Never evict that active source midway.
     int pos = _app_sync_active ? 1 : 0;
-    while (pos < offline_queue_len) {
-      if (offline_queue[pos].isChannelMsg()) {
-        for (int i = pos; i < offline_queue_len - 1; i++) { // delete oldest channel msg from queue
-          offline_queue[i] = offline_queue[i + 1];
-        }
-        MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
-        offline_queue[offline_queue_len - 1].len = len;
-        offline_queue[offline_queue_len - 1].compat_flags = compat_flags;
-        memcpy(offline_queue[offline_queue_len - 1].buf, frame, len);
-        return;
-      }
-      pos++;
+    while (pos < offline_queue_len && !offline_queue[pos].isChannelMsg()) pos++;
+    if (pos >= offline_queue_len) {
+      MESH_DEBUG_PRINTLN("INFO: no channel messages to remove from queue.");
+      return -1;
     }
-    MESH_DEBUG_PRINTLN("INFO: no channel messages to remove from queue.");
-  } else {
-    offline_queue[offline_queue_len].len = len;
-    offline_queue[offline_queue_len].compat_flags = compat_flags;
-    memcpy(offline_queue[offline_queue_len].buf, frame, len);
-    offline_queue_len++;
+    onQueueEntryRemoved(pos);
+    for (int i = pos; i < offline_queue_len - 1; i++) {
+      offline_queue[i] = offline_queue[i + 1];
+      moveQueueAux(i, i + 1);
+    }
+    offline_queue_len--;
+    clearQueueAux(offline_queue_len);
+    MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
   }
+  const int pos = offline_queue_len;
+  offline_queue[pos].len = len;
+  memcpy(offline_queue[pos].buf, frame, len);
+  initQueueEntry(pos, compat_flags, seq);
+  offline_queue_len++;
+  return pos;
 }
 
 void MyMesh::removeOfflineQueueHead() {
   if (offline_queue_len <= 0) return;
+  onQueueEntryRemoved(0);
   offline_queue_len--;
   for (int i = 0; i < offline_queue_len; i++) {
     offline_queue[i] = offline_queue[i + 1];
+    moveQueueAux(i, i + 1);
   }
+  clearQueueAux(offline_queue_len);
+  // Nothing to count here: the store's watermark is the oldest entry still
+  // queued, taken from the queue itself by serviceOfflineStore().
+}
+
+// The per-entry bookkeeping that travels with a queue entry when the queue shifts.
+void MyMesh::moveQueueAux(int dst, int src) {
+  offline_queue_store_pending[dst] = offline_queue_store_pending[src];
+  offline_queue_seq[dst] = offline_queue_seq[src];
+  offline_queue_route[dst] = offline_queue_route[src];
+#if WITH_OFFLINE_ROUTES
+  offline_queue_live[dst] = offline_queue_live[src];
+#endif
+}
+
+void MyMesh::clearQueueAux(int pos) {
+  offline_queue[pos].compat_flags = 0;
+  offline_queue_store_pending[pos] = 0;
+  offline_queue_seq[pos] = offline_ring::NO_SEQ;
+  offline_queue_route[pos] = OFFLINE_ROUTE_NONE;
+#if WITH_OFFLINE_ROUTES
+  offline_queue_live[pos] = OFFLINE_LIVE_NONE;
+#endif
+}
+
+// A new entry at `pos`. A frame coming back from the offline store keeps its
+// sequence number; a new one takes the next and waits for loop() to write it.
+void MyMesh::initQueueEntry(int pos, uint8_t compat_flags, uint32_t seq) {
+  offline_queue[pos].compat_flags = compat_flags;
+  offline_queue_route[pos] = OFFLINE_ROUTE_NONE;
+#if WITH_OFFLINE_ROUTES
+  offline_queue_live[pos] = OFFLINE_LIVE_NONE;
+#endif
+  if (seq != offline_ring::NO_SEQ) {
+    offline_queue_seq[pos] = seq;
+    offline_queue_store_pending[pos] = 0;   // it is in the store already
+    return;
+  }
+  offline_queue_seq[pos] = offline_store.takeSeq();
+  offline_queue_store_pending[pos] = 1;
+  const unsigned long now = millis() | 1;   // 0 means "nothing pending"
+  offline_last_enqueue = now;
+  if (offline_pending_since == 0) offline_pending_since = now;
+}
+
+void MyMesh::onQueueEntryRemoved(int pos) {
+#if WITH_OFFLINE_ROUTES
+  if (offline_queue_route[pos] == OFFLINE_ROUTE_POOL) {
+    const int i = findPoolRoute(offline_queue_seq[pos]);
+    if (i >= 0) route_pool[i].seq = offline_ring::NO_SEQ;
+  }
+#else
+  (void)pos;
+#endif
 }
 
 void MyMesh::resetAppSyncState() {
   _app_sync_active = false;
   _app_sync_original_sent = false;
+  _app_sync_route_sent = false;
   _app_sync_next_part = 0;
   _app_sync_timestamp = 0;
 }
@@ -402,13 +459,11 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     log_raw = mapped;
     log_len = mapped_len;
   }
-  if (!_serial || !_serial->isConnected()) {
-    // No app attached right now: keep the frames a client can turn into a
-    // message route (LogRxData) once it reconnects.
-    bufferRawFeed(snr, rssi, log_raw, log_len);
-    return;
-  }
-  if (_serial->isConnected() && log_len + 3 <= MAX_FRAME_SIZE) {
+  // No app attached: nothing to push. The route of a message heard meanwhile is
+  // kept with the queued message itself (keepRoute), not here: only the copy that
+  // produced a message matters, and this runs for every packet on the air.
+  if (!_serial || !_serial->isConnected()) return;
+  if (log_len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
     out_frame[i++] = (int8_t)(snr * 4);
@@ -420,120 +475,364 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   }
 }
 
-// Where the payload starts inside a raw packet, or -1 when it is malformed.
-// Layout: [header][transport codes x4?][path_len][path bytes][payload]
-static int rawPacketPayloadOffset(const uint8_t* raw, int len) {
-  if (!raw || len < 2) return -1;
-  int i = 1;
-  const uint8_t route_type = raw[0] & PH_ROUTE_MASK;
-  if (route_type == ROUTE_TYPE_TRANSPORT_FLOOD || route_type == ROUTE_TYPE_TRANSPORT_DIRECT) {
-    i += 4;
-  }
-  if (i >= len) return -1;
-  const uint8_t path_len_raw = raw[i++];
-  if (path_len_raw == 0xFF) return i;   // direct route: its path is consumed on the way
-  if (!mesh::Packet::isValidPathLen(path_len_raw)) return -1;
-  i += ((path_len_raw >> 6) + 1) * (path_len_raw & 63);
-  return (i <= len) ? i : -1;
+// The offline store lives in a filesystem: one small file per record, plus one
+// file holding the ring index. Handles are opened for a single call and closed
+// again, so nothing dangles across a disconnect or a reset.
+
+static File offlineOpenRead(FILESYSTEM* fs, const char* path) {
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  return fs->open(path, FILE_O_READ);
+#elif defined(RP2040_PLATFORM)
+  return fs->open(path, "r");
+#else
+  return fs->open(path, "r", false);
+#endif
 }
 
-// How many path bytes a raw packet carries, or -1 when it is malformed.
-static int rawPacketPathBytes(const uint8_t* raw, int len) {
-  const int payload = rawPacketPayloadOffset(raw, len);
-  if (payload < 0) return -1;
-  int header = 2;   // header + path_len byte
-  const uint8_t route_type = raw[0] & PH_ROUTE_MASK;
-  if (route_type == ROUTE_TYPE_TRANSPORT_FLOOD || route_type == ROUTE_TYPE_TRANSPORT_DIRECT) {
-    header += 4;
-  }
-  return payload - header;
+static File offlineOpenWrite(FILESYSTEM* fs, const char* path) {
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  return fs->open(path, FILE_O_WRITE);
+#elif defined(RP2040_PLATFORM)
+  return fs->open(path, "w");
+#else
+  return fs->open(path, "w", true);
+#endif
 }
 
-// Keep a raw RX frame for replay after the app reconnects. The payload type sits
-// in bits 2-5 of the packet header, so no full parse is needed here; non-message
-// traffic (acks, adverts, traces, ...) is dropped so the ring only holds frames a
-// client can turn into a message with its route.
-void MyMesh::bufferRawFeed(float snr, float rssi, const uint8_t* raw, int len) {
-  if (!raw || len <= 0) return;
-  const uint8_t payload_type = (raw[0] >> 2) & 0x0F;
-  // Channel payloads only: the client holds the channel key, so it decrypts the
-  // frame itself and turns it into a message together with its route. A direct
-  // message's payload is encrypted with the peer secret, which only the node has.
-  if (payload_type != PAYLOAD_TYPE_GRP_TXT &&
-      payload_type != PAYLOAD_TYPE_GRP_DATA) {
-    return;
-  }
-  if (len > MAX_TRANS_UNIT) len = MAX_TRANS_UNIT;
+// The records go to the filesystem that has room for them. On the nRF52 boards
+// that is the second one: the primary filesystem (InternalFS on the T114) is a
+// 28 KB region shared with the identity and the BLE bonds, while the contacts and
+// channels filesystem is a 100 KB region of its own. The space check asks the
+// same filesystem it writes to.
+static FILESYSTEM* offlineStoreFS(DataStore* store) {
+  FILESYSTEM* fs = store->getSecondaryFS();
+  if (fs) return fs;
+  return store->getPrimaryFS();
+}
 
-  // One transmission is heard once per route it travels: the sender's own copy
-  // plus one per relay. The payload is identical across those copies and only
-  // the path grows, so keep a single entry per transmission — the copy carrying
-  // the most route — instead of spending the ring on duplicates.
-  const int new_payload = rawPacketPayloadOffset(raw, len);
-  const int new_path_bytes = rawPacketPathBytes(raw, len);
-  if (new_payload >= 0 && new_path_bytes >= 0 && raw_feed_len > 0) {
-    const uint8_t tail = (uint8_t)((raw_feed_next + RAW_FEED_RING_SLOTS - raw_feed_len) %
-                                   RAW_FEED_RING_SLOTS);
-    for (uint8_t k = 0; k < raw_feed_len; k++) {
-      RawFeedEntry& old = raw_feed_ring[(uint8_t)((tail + k) % RAW_FEED_RING_SLOTS)];
-      const uint8_t* old_raw = &old.data[2];
-      const int old_len = (int)old.len - 2;
-      const int old_payload = rawPacketPayloadOffset(old_raw, old_len);
-      if (old_payload < 0) continue;
-      const int old_payload_len = old_len - old_payload;
-      if (old_payload_len <= 0 || old_payload_len != len - new_payload) continue;
-      if (memcmp(&old_raw[old_payload], &raw[new_payload], (size_t)old_payload_len) != 0) continue;
-      if (rawPacketPathBytes(old_raw, old_len) >= new_path_bytes) {   // kept copy is at least as good
-        RAWFEED_LOG("dup skip len=%u kept_path=%d new_path=%d\n",
-                    (unsigned)len, rawPacketPathBytes(old_raw, old_len), new_path_bytes);
-        return;
-      }
-      RAWFEED_LOG("dup replace len=%u path %d->%d\n",
-                  (unsigned)len, rawPacketPathBytes(old_raw, old_len), new_path_bytes);
-      old.at_ms = millis();                                                // replace, keep FIFO position
-      old.data[0] = (uint8_t)(int8_t)(snr * 4);
-      old.data[1] = (uint8_t)(int8_t)rssi;
-      memcpy(&old.data[2], raw, (size_t)len);
-      old.len = (uint16_t)(len + 2);
-      return;
+#define OFFLINE_STORE_RECORD_FMT "/oq%02x.bin"
+#define OFFLINE_STORE_INDEX "/oqidx.bin"
+
+static void offlineRecordPath(char* path, size_t size, uint16_t slot) {
+  snprintf(path, size, OFFLINE_STORE_RECORD_FMT, (unsigned)slot);
+}
+
+// Earlier layouts kept a separate raw feed ring (/rf*.bin, /rfidx.bin, before that
+// /rawfeed.bin) and a queue ring (/rq*.bin, /rqidx.bin). Nothing reads them any
+// more, and they hold space the contacts need. Their indexes are what say the
+// record files are there, so the sweep runs only while one is still present.
+static void offlineDropLegacy(FILESYSTEM* fs) {
+  static const char* const singles[] = { "/rawfeed.bin", "/rfidx.bin", "/rqidx.bin" };
+  bool any = false;
+  for (const char* path : singles) {
+    if (fs->exists(path)) {
+      fs->remove(path);
+      any = true;
     }
   }
-
-  RawFeedEntry& slot = raw_feed_ring[raw_feed_next];
-  slot.at_ms = millis();
-  slot.data[0] = (uint8_t)(int8_t)(snr * 4);
-  slot.data[1] = (uint8_t)(int8_t)rssi;
-  memcpy(&slot.data[2], raw, (size_t)len);
-  slot.len = (uint16_t)(len + 2);
-  raw_feed_next = (uint8_t)((raw_feed_next + 1) % RAW_FEED_RING_SLOTS);
-  if (raw_feed_len < RAW_FEED_RING_SLOTS) raw_feed_len++;
-  RAWFEED_LOG("stored type=%u len=%u ring=%u\n",
-              (unsigned)payload_type, (unsigned)len, (unsigned)raw_feed_len);
-}
-
-// Hand one buffered raw frame to the app; entries past the TTL are discarded so
-// a stale packet is never replayed as a fresh message.
-bool MyMesh::emitBufferedRawFeed() {
-  if (raw_feed_len == 0) return false;
-  const uint8_t tail = (uint8_t)((raw_feed_next + RAW_FEED_RING_SLOTS - raw_feed_len) %
-                                 RAW_FEED_RING_SLOTS);
-  RawFeedEntry& slot = raw_feed_ring[tail];
-  raw_feed_len--;
-  if (millis() - slot.at_ms > RAW_FEED_TTL_MILLIS) return false;   // too old to replay
-  if (slot.len < 2 || slot.len > RAW_FEED_DATA_MAX) return false;  // never trust the ring length
-  uint8_t frame[RAW_FEED_DATA_MAX + 1];
-  frame[0] = PUSH_CODE_LOG_RX_DATA;
-  memcpy(&frame[1], slot.data, slot.len);
-  const uint16_t frame_len = (uint16_t)(slot.len + 1);
-  RAWFEED_LOG("emit len=%u left=%u age_ms=%lu\n",
-              (unsigned)frame_len, (unsigned)raw_feed_len,
-              (unsigned long)(millis() - slot.at_ms));
-  if (frame_len <= MAX_FRAME_SIZE) {
-    _serial->writeFrame(frame, frame_len);
-    return true;
+  if (!any) return;
+  char path[16];
+  for (uint16_t s = 0; s < 64; s++) {
+    snprintf(path, sizeof(path), "/rf%02x.bin", (unsigned)s);
+    if (fs->exists(path)) fs->remove(path);
+    snprintf(path, sizeof(path), "/rq%02x.bin", (unsigned)s);
+    if (fs->exists(path)) fs->remove(path);
   }
-  return false;
+  OQ_LOG("store: removed the earlier layout\n");
 }
+
+// A record file is replaced, never rewritten: on the nRF52 core FILE_O_WRITE opens
+// a file and seeks to its end, so a write "at an offset" lands at the end and
+// still reports success. The ring reads every write back, because LittleFS
+// commits a file on close() and close() reports nothing through this API.
+static bool offlineWriteFile(FILESYSTEM* fs, const char* path, const uint8_t* data, size_t len) {
+  if (!fs) return false;
+  if (fs->exists(path)) fs->remove(path);
+  File f = offlineOpenWrite(fs, path);
+  if (!f) return false;
+  const bool ok = f.write(data, len) == len;
+  f.close();
+  return ok;
+}
+
+static int offlineReadFile(FILESYSTEM* fs, const char* path, uint8_t* buf, size_t cap) {
+  if (!fs) return -1;
+  File f = offlineOpenRead(fs, path);
+  if (!f) return -1;
+  const int n = (int)f.read(buf, cap);
+  f.close();
+  return n;
+}
+
+bool MyMesh::OfflineFsStorage::writeSlot(uint16_t slot, const uint8_t* data, size_t len) {
+  char path[16];
+  offlineRecordPath(path, sizeof(path), slot);
+  return offlineWriteFile(offlineStoreFS(store), path, data, len);
+}
+
+int MyMesh::OfflineFsStorage::readSlot(uint16_t slot, uint8_t* buf, size_t cap) {
+  char path[16];
+  offlineRecordPath(path, sizeof(path), slot);
+  return offlineReadFile(offlineStoreFS(store), path, buf, cap);
+}
+
+void MyMesh::OfflineFsStorage::removeSlot(uint16_t slot) {
+  FILESYSTEM* fs = offlineStoreFS(store);
+  if (!fs) return;
+  char path[16];
+  offlineRecordPath(path, sizeof(path), slot);
+  if (fs->exists(path)) fs->remove(path);
+}
+
+bool MyMesh::OfflineFsStorage::writeIndex(const uint8_t* data, size_t len) {
+  return offlineWriteFile(offlineStoreFS(store), OFFLINE_STORE_INDEX, data, len);
+}
+
+int MyMesh::OfflineFsStorage::readIndex(uint8_t* buf, size_t cap) {
+  return offlineReadFile(offlineStoreFS(store), OFFLINE_STORE_INDEX, buf, cap);
+}
+
+void MyMesh::beginOfflineStore() {
+  FILESYSTEM* fs = offlineStoreFS(_store);
+  if (!fs) return;
+  offlineDropLegacy(fs);
+  FILESYSTEM* primary = _store->getPrimaryFS();
+  if (primary && primary != fs) offlineDropLegacy(primary);
+
+#if OFFLINE_STORE_OFF
+  OQ_LOG("store: off by build flag\n");
+  return;
+#endif
+
+  if (!offline_store.open()) {
+    // No usable index: start over. The store shares the filesystem with the
+    // contacts, so it only takes space when there is clearly enough for both:
+    // every slot at its largest, plus a share of the filesystem (never under
+    // 16 KB) left for the contacts to keep growing.
+    const uint32_t total_kb = _store->getStorageTotalKb();
+    const uint32_t used_kb = _store->getStorageUsedKb();
+    const uint32_t need_kb =
+        ((uint32_t)OFFLINE_STORE_SLOTS * (sizeof(offline_scratch) + 64) + 1023) / 1024 + 1;
+    uint32_t reserve_kb = total_kb / 6;
+    if (reserve_kb < 16) reserve_kb = 16;
+    if (used_kb + need_kb + reserve_kb > total_kb) {
+      OQ_LOG("store: off - %lu KB total, %lu used, %lu needed, %lu reserved\n",
+             (unsigned long)total_kb, (unsigned long)used_kb,
+             (unsigned long)need_kb, (unsigned long)reserve_kb);
+      return;
+    }
+    if (!offline_store.create()) {
+      OQ_LOG("store: cannot create the index, off\n");
+      return;
+    }
+    OQ_LOG("store: created, %u slots, %lu KB needed of %lu KB free\n", (unsigned)OFFLINE_STORE_SLOTS,
+           (unsigned long)need_kb, (unsigned long)(total_kb - used_kb));
+    return;
+  }
+
+  // Hand what the app has not taken yet back to the queue, oldest first, each
+  // frame under its own sequence number. The routes stay in the store and are
+  // read again when their message goes out.
+  uint32_t seqs[OFFLINE_STORE_SLOTS];
+  const int n = offline_store.pending(seqs, OFFLINE_STORE_SLOTS);
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  // A frame is only too old if the clock that says so could be right: a volatile
+  // clock starts at a fixed date and would age every record it sees.
+  const bool clock_set = (_time_source != TIME_SOURCE_UNSET);
+  uint8_t frame[OFFLINE_STORE_MAX_FRAME];
+  uint16_t restored = 0, lost = 0, stale = 0;
+  for (int k = 0; k < n; k++) {
+    offline_ring::Record r;
+    if (!offline_store.get(seqs[k], r, frame, nullptr)) {
+      lost++;   // the slot no longer reads back whole
+      continue;
+    }
+    if (r.at_s != 0 && clock_set && now > r.at_s && now - r.at_s > OFFLINE_STORE_TTL_SECONDS) {
+      stale++;
+      continue;
+    }
+    const int pos = addToOfflineQueue(frame, r.frame_len, r.flags, r.seq);
+    if (pos < 0) {
+      lost++;
+      continue;
+    }
+#if WITH_OFFLINE_ROUTES
+    if (r.route_len > 0) offline_queue_route[pos] = OFFLINE_ROUTE_STORED;
+#endif
+    restored++;
+  }
+  offline_last_restored = restored;
+  offline_last_lost = lost;
+  OQ_LOG("store: opened, %d held, %u restored, %u stale, %u lost (next=%lu acked=%lu)\n", n,
+         (unsigned)restored, (unsigned)stale, (unsigned)lost,
+         (unsigned long)offline_store.nextSeq(), (unsigned long)offline_store.acked());
+}
+
+// Called from loop(), and only while no BLE link is up. Writes the entries the
+// app has not taken once the queue has been quiet for a moment, then moves the
+// watermark up to the oldest entry still queued.
+void MyMesh::serviceOfflineStore() {
+  if (!offline_store.usable()) return;
+  const unsigned long now = millis();
+  if (offline_pending_since != 0 &&
+      (now - offline_last_enqueue >= OFFLINE_STORE_QUIET_MS ||
+       now - offline_pending_since >= OFFLINE_STORE_MAX_WAIT_MS)) {
+    uint8_t budget = OFFLINE_STORE_FLUSH_BATCH;
+    bool more = false;
+    for (int pos = 0; pos < offline_queue_len; pos++) {
+      if (!offline_queue_store_pending[pos]) continue;
+      if (budget == 0) {
+        more = true;
+        break;
+      }
+      budget--;
+      const uint8_t* data = offline_queue[pos].buf;
+      const uint16_t len = (uint16_t)offline_queue[pos].len;
+      if (!data || len == 0 || len > OFFLINE_STORE_MAX_FRAME) {
+        offline_queue_store_pending[pos] = 0;
+        continue;
+      }
+      offline_ring::Record r;
+      r.seq = offline_queue_seq[pos];
+      r.at_s = getRTCClock()->getCurrentTime();
+      r.flags = offline_queue[pos].compat_flags;
+      r.frame_len = len;
+      r.route_len = 0;
+      const uint8_t* route = nullptr;
+#if WITH_OFFLINE_ROUTES
+      const int pool = offline_queue_route[pos] == OFFLINE_ROUTE_POOL ? findPoolRoute(r.seq) : -1;
+      if (pool >= 0) {
+        route = route_pool[pool].data;
+        r.route_len = route_pool[pool].len;
+      }
+#endif
+      if (!offline_store.put(r, data, route)) {
+        OQ_LOG("store: write failed seq=%lu (store %s)\n", (unsigned long)r.seq,
+               offline_store.usable() ? "on" : "now off");
+        more = true;   // another chance next pass, unless the store gave up
+        break;
+      }
+      offline_queue_store_pending[pos] = 0;
+#if WITH_OFFLINE_ROUTES
+      if (pool >= 0) {
+        // The route now lives in the record; the RAM copy is free for the next one.
+        offline_queue_route[pos] = OFFLINE_ROUTE_STORED;
+        route_pool[pool].seq = offline_ring::NO_SEQ;
+      }
+#endif
+      OQ_LOG("store: seq=%lu len=%u route=%u written\n", (unsigned long)r.seq,
+             (unsigned)len, (unsigned)r.route_len);
+    }
+    if (!more) offline_pending_since = 0;
+  }
+  if (!offline_store.usable()) return;
+  // Everything below the oldest entry still queued has been taken by the app or
+  // dropped on purpose; either way it is not to come back after a reboot.
+  offline_store.setAcked(offline_queue_len > 0 ? offline_queue_seq[0] : offline_store.nextSeq());
+  if (offline_store.indexDirty() && now - offline_last_enqueue >= OFFLINE_STORE_QUIET_MS) {
+    offline_store.flushIndex();
+  }
+}
+
+#if WITH_OFFLINE_ROUTES
+int MyMesh::findPoolRoute(uint32_t seq) const {
+  for (int i = 0; i < OFFLINE_ROUTE_POOL_SLOTS; i++) {
+    if (route_pool[i].seq == seq) return i;
+  }
+  return -1;
+}
+
+// Keep the route of a message queued at `pos`: the raw packet of the copy this
+// node decoded, path as received. It is the copy whose hop count the queued
+// frame reports. Only flood-routed channel messages carry a path worth showing.
+void MyMesh::keepRoute(int pos, const mesh::Packet* pkt) {
+  if (pos < 0 || pos >= offline_queue_len || !pkt || !pkt->isRouteFlood()) return;
+  const uint8_t type = pkt->getPayloadType();
+  if (type != PAYLOAD_TYPE_GRP_TXT && type != PAYLOAD_TYPE_GRP_DATA) return;
+
+  uint8_t raw[MAX_TRANS_UNIT + 1];
+  int len = pkt->writeTo(raw);
+  // The same mapping as the live push, so the app decodes the text the queued
+  // frame carries (it matches a channel copy by its decrypted content).
+  uint8_t mapped[MAX_TRANS_UNIT + 1];
+  const int mapped_len = mapCyr2LatChannelRawLog(raw, len, mapped, sizeof(mapped));
+  const uint8_t* src = raw;
+  if (mapped_len > 0) {
+    src = mapped;
+    len = mapped_len;
+  }
+  if (len <= 0 || len + 2 > OFFLINE_ROUTE_MAX) return;
+
+  // A free slot, or else the one holding the oldest route: the newest messages
+  // keep theirs. loop() empties the pool within seconds while no app is attached,
+  // so this only bites when the store cannot take records at all.
+  int slot = -1;
+  for (int i = 0; i < OFFLINE_ROUTE_POOL_SLOTS; i++) {
+    if (route_pool[i].seq == offline_ring::NO_SEQ) {
+      slot = i;
+      break;
+    }
+    if (slot < 0 || route_pool[i].seq < route_pool[slot].seq) slot = i;
+  }
+  if (route_pool[slot].seq != offline_ring::NO_SEQ) {
+    for (int q = 0; q < offline_queue_len; q++) {
+      if (offline_queue_seq[q] == route_pool[slot].seq) {
+        offline_queue_route[q] = OFFLINE_ROUTE_NONE;
+        break;
+      }
+    }
+    OQ_LOG("route: pool full, seq=%lu loses its route\n", (unsigned long)route_pool[slot].seq);
+  }
+  RoutePoolEntry& e = route_pool[slot];
+  e.seq = offline_queue_seq[pos];
+  e.len = (uint16_t)(len + 2);
+  e.data[0] = (uint8_t)pkt->_snr;    // SNR x4, as in a LogRxData push
+  e.data[1] = (uint8_t)pkt->_rssi;
+  memcpy(&e.data[2], src, (size_t)len);
+  offline_queue_route[pos] = OFFLINE_ROUTE_POOL;
+  // An attached app got this very copy live, as a LogRxData push. The route is
+  // kept anyway: the app may disconnect before it takes the message, and the next
+  // session — or another app — needs it. The session number keeps the current one
+  // from being handed the same copy twice, which it would count as a relay. On a
+  // wired link isConnected() is always true, so a session only starts when an app
+  // actually says CMD_APP_START.
+  offline_queue_live[pos] = (_serial && _serial->isConnected()) ? app_session : OFFLINE_LIVE_NONE;
+  OQ_LOG("route: kept seq=%lu len=%u type=%u route=%u hops=%u live=%u\n", (unsigned long)e.seq,
+         (unsigned)e.len, (unsigned)type, (unsigned)(pkt->header & PH_ROUTE_MASK),
+         (unsigned)pkt->getPathHashCount(), (unsigned)offline_queue_live[pos]);
+}
+
+// Push the route of the queue entry at `pos` as a LogRxData frame, right before
+// the entry itself goes out.
+void MyMesh::emitQueuedRoute(int pos) {
+  if (pos < 0 || pos >= offline_queue_len) return;
+  if (!_serial || !_serial->isConnected()) return;
+  if (offline_queue_live[pos] == app_session) return;   // this session saw it live
+  uint8_t frame[1 + OFFLINE_ROUTE_MAX];
+  uint16_t len = 0;
+  if (offline_queue_route[pos] == OFFLINE_ROUTE_POOL) {
+    const int i = findPoolRoute(offline_queue_seq[pos]);
+    if (i >= 0) {
+      len = route_pool[i].len;
+      memcpy(&frame[1], route_pool[i].data, len);
+    }
+  } else if (offline_queue_route[pos] == OFFLINE_ROUTE_STORED) {
+    offline_ring::Record r;
+    if (offline_store.get(offline_queue_seq[pos], r, nullptr, &frame[1])) len = r.route_len;
+  }
+  if (len < 3) return;   // snr, rssi and at least a packet header
+  frame[0] = PUSH_CODE_LOG_RX_DATA;
+  if (len + 1 <= MAX_FRAME_SIZE) {
+    _serial->writeFrame(frame, len + 1);
+  } else {
+    // Without fragments a raw packet past MAX_FRAME_SIZE cannot reach the app.
+    OQ_LOG("route: seq=%lu too long (%u) without fragments\n",
+           (unsigned long)offline_queue_seq[pos], (unsigned)(len + 1));
+    return;
+  }
+  OQ_LOG("route: seq=%lu sent len=%u\n", (unsigned long)offline_queue_seq[pos], (unsigned)len);
+}
+#endif
 
 bool MyMesh::isAutoAddEnabled() const {
   return (_prefs.manual_add_contacts & 1) == 0;
@@ -853,7 +1152,12 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
   memcpy(&out_frame[i], text, tlen);
   i += tlen;
-  addToOfflineQueue(out_frame, i);
+  const int queued_at = addToOfflineQueue(out_frame, i);
+#if WITH_OFFLINE_ROUTES
+  keepRoute(queued_at, pkt);
+#else
+  (void)queued_at;
+#endif
 
   if (_serial->isConnected()) {
     uint8_t frame[1];
@@ -920,7 +1224,12 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
   // Store only the original binary frame. Any compatibility text is derived
   // later, when the connected app requests this frame and its capabilities
   // are known.
-  addToOfflineQueue(out_frame, i, compat_flags);
+  const int queued_at = addToOfflineQueue(out_frame, i, compat_flags);
+#if WITH_OFFLINE_ROUTES
+  keepRoute(queued_at, pkt);
+#else
+  (void)queued_at;
+#endif
 
 #ifdef DISPLAY_CLASS
   const uint8_t hop_count = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
@@ -1234,12 +1543,24 @@ void MyMesh::onSendTimeout() {}
 
 MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui)
     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
-      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui), _iter(0) {
+      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui), _iter(0),
+      offline_store(offline_fs, OFFLINE_STORE_SLOTS, offline_slot_seq, offline_scratch,
+                    sizeof(offline_scratch), OFFLINE_STORE_MAX_FRAME, OFFLINE_ROUTE_MAX) {
   _iter_started = false;
   _cli_rescue = false;
   offline_queue_len = 0;
-  raw_feed_next = 0;
-  raw_feed_len = 0;
+  offline_fs.store = &store;
+  offline_last_enqueue = 0;
+  offline_pending_since = 0;
+  offline_last_restored = 0;
+  offline_last_lost = 0;
+  offline_beat = 0;
+  for (int i = 0; i < OFFLINE_QUEUE_SIZE; i++) clearQueueAux(i);
+#if WITH_OFFLINE_ROUTES
+  for (int i = 0; i < OFFLINE_ROUTE_POOL_SLOTS; i++) route_pool[i].seq = offline_ring::NO_SEQ;
+  app_session = 0;
+#endif
+  resetAppSyncState();
   app_target_ver = 0;
   clearPendingReqs();
   next_ack_idx = 0;
@@ -1444,6 +1765,8 @@ void MyMesh::begin(bool has_display) {
     }
   }
 #endif
+
+  beginOfflineStore();
 }
 
 const char *MyMesh::getNodeName() {
@@ -1522,6 +1845,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     _app_supports_aeic = companion_app::hasCapability(&cmd_frame[8], len - 8, "aeic") ||
                          companion_app::appNameIsMeshCoreOpen(&cmd_frame[8], len - 8);
     _app_supports_mcoimg = companion_app::hasCapability(&cmd_frame[8], len - 8, "mcimg");
+#if WITH_OFFLINE_ROUTES
+    // A new app session: routes this node pushed live to an earlier one are owed
+    // to this one again (the client forgets them on disconnect).
+    app_session = (uint8_t)((app_session + 1) % OFFLINE_LIVE_NONE);
+#endif
 
     _iter_started = false; // stop any left-over ContactsIterator
     int i = 0;
@@ -1896,21 +2224,6 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
-    // Buffered raw RX frames carry the message route. A client builds the
-    // message (and its path) from the raw frame, so hand those over before any
-    // queued frame — otherwise the message is finalised without a route.
-    if (raw_feed_len > 0) {
-      RAWFEED_LOG("sync-replay left=%u\n", (unsigned)raw_feed_len);
-      emitBufferedRawFeed();
-      out_frame[0] = RESP_CODE_NO_MORE_MESSAGES;
-      _serial->writeFrame(out_frame, 1);
-      // Keep the app asking. It reads NO_MORE_MESSAGES as "nothing left" and
-      // stops polling, which would strand the rest of the feed (and the queued
-      // messages behind it). The tickle makes it request again until drained.
-      out_frame[0] = PUSH_CODE_MSG_WAITING;
-      _serial->writeFrame(out_frame, 1);
-      return;
-    }
     int out_len = getNextAppFrame(out_frame);
     if (out_len > 0) {
       if (app_target_ver < 3) {
@@ -2903,6 +3216,15 @@ void MyMesh::loop() {
 #else
   bool ble_busy = false;
 #endif
+  // Heartbeat: the restore verdict rides along, since the boot line that reports
+  // it is easily lost (the USB CDC re-enumerates across a reset).
+  if (millisHasNowPassed(offline_beat)) {
+    offline_beat = futureMillis(30000);
+    OQ_LOG("alive: link=%d store=%d next=%lu acked=%lu queue=%d restored=%u lost=%u\n",
+           ble_busy ? 1 : 0, offline_store.usable() ? 1 : 0,
+           (unsigned long)offline_store.nextSeq(), (unsigned long)offline_store.acked(),
+           offline_queue_len, (unsigned)offline_last_restored, (unsigned)offline_last_lost);
+  }
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     if (!ble_busy) {
       saveContacts();
@@ -2919,6 +3241,15 @@ void MyMesh::loop() {
       dirty_prefs_expiry = futureMillis(1000);
     }
   }
+
+  // The offline store is written in the same window, never with a BLE link up:
+  // a flash write stalls the SoftDevice. A wired link on an nRF52 USB build is
+  // not a BLE link, and its isConnected() is always true, so it must not block.
+#if defined(NRF52_PLATFORM) && defined(BLE_PIN_CODE)
+  if (!ble_busy) serviceOfflineStore();
+#else
+  serviceOfflineStore();
+#endif
 
 #ifdef DISPLAY_CLASS
   if (_ui && _serial) _ui->setHasConnection(_serial->isConnected());
@@ -3784,6 +4115,14 @@ int MyMesh::getNextAppFrame(uint8_t frame[]) {
     }
 
     const Frame& source = offline_queue[0];
+#if WITH_OFFLINE_ROUTES
+    // The route goes out first, once per entry: a client binds a raw channel copy
+    // to the message that arrives after it.
+    if (!_app_sync_route_sent) {
+      _app_sync_route_sent = true;
+      emitQueuedRoute(0);
+    }
+#endif
     size_t part_count = 0;
     bool additive = false;
     const int transformed_length = renderCompatFramePart(
@@ -3800,18 +4139,18 @@ int MyMesh::getNextAppFrame(uint8_t frame[]) {
         memcpy(frame, source.buf, source.len);
         const int length = source.len;
         removeOfflineQueueHead();
-        _app_sync_active = false;
+        resetAppSyncState();
         return length;
       }
       removeOfflineQueueHead();
-      _app_sync_active = false;
+      resetAppSyncState();
       continue;
     }
 
     _app_sync_next_part++;
     if (_app_sync_next_part >= part_count) {
       removeOfflineQueueHead();
-      _app_sync_active = false;
+      resetAppSyncState();
     }
     return transformed_length;
   }

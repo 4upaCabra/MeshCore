@@ -42,6 +42,7 @@
 #include <helpers/OptionalFeatureFlags.h>
 #include <helpers/BaseSerialInterface.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/OfflineRecordRing.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/TimeSyncHelper.h>
@@ -332,7 +333,10 @@ private:
   void writeDisabledFrame();
   void writeContactRespFrame(uint8_t code, const ContactInfo &contact);
   void updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, const uint8_t *frame, int len);
-  void addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags = 0);
+  // Returns the entry's position, or -1 when it was dropped. `seq` is given only
+  // when the frame comes back from the offline store.
+  int addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags = 0,
+                        uint32_t seq = offline_ring::NO_SEQ);
   void removeOfflineQueueHead();
   void resetAppSyncState();
   // Canonical queue frames are stored in the v3 layout (SNR + two reserved
@@ -402,43 +406,118 @@ private:
   };
   int offline_queue_len;
   Frame offline_queue[OFFLINE_QUEUE_SIZE];
+  // Per-entry bookkeeping, kept outside the Frame so it travels with the entry
+  // as the queue shifts: 1 while the entry has not reached the filesystem, its
+  // sequence number in the offline store, and where its route lives.
+  uint8_t offline_queue_store_pending[OFFLINE_QUEUE_SIZE];
+  uint32_t offline_queue_seq[OFFLINE_QUEUE_SIZE];
+  uint8_t offline_queue_route[OFFLINE_QUEUE_SIZE];
+  #define OFFLINE_ROUTE_NONE   0
+  #define OFFLINE_ROUTE_POOL   1   // in route_pool[], not written yet
+  #define OFFLINE_ROUTE_STORED 2   // in the entry's record in the offline store
+  void moveQueueAux(int dst, int src);
+  void clearQueueAux(int pos);
+  void onQueueEntryRemoved(int pos);   // before the entry at pos leaves the queue
+  void initQueueEntry(int pos, uint8_t compat_flags, uint32_t seq);
+
+  // Set OFFLINE_STORE_DEBUG=1 to trace what the offline store keeps and hands
+  // back. Keep it off for builds whose Serial carries the companion protocol.
+  #ifndef OFFLINE_STORE_DEBUG
+    #define OFFLINE_STORE_DEBUG 0
+  #endif
+  #if OFFLINE_STORE_DEBUG
+    // Only when the CDC has room for the whole line: Serial.write() spins while
+    // a host holds the port open without reading it, which would stall the node.
+    #define OQ_LOG(...) do { if (Serial.availableForWrite() > 96) Serial.printf("offline: " __VA_ARGS__); } while (0)
+  #else
+    #define OQ_LOG(...) {}
+  #endif
+
+  // The offline queue survives a reboot: one record per queued frame in a ring
+  // of files (offline_ring::Ring), identified by sequence number. What the app
+  // has consumed is a watermark taken from the queue itself — the lowest seq
+  // still in it — so an entry dropped out of order cannot shift what is restored.
+  //
+  // A record also carries the route of the message, when there is one to keep:
+  // the raw packet of the copy this node decoded, as the app would have seen it
+  // live in a LogRxData push. It is handed over right before its message.
+  //
+  // Writes happen only from loop(), never while a BLE link is up (a flash write
+  // stalls the SoftDevice), and only once the queue has been quiet for a moment:
+  // an entry the app takes right away never touches the flash.
+  #define OFFLINE_STORE_MAX_FRAME MAX_FRAME_SIZE
+  #define OFFLINE_ROUTE_MAX (MAX_TRANS_UNIT + 2)   // [snr x4][rssi][raw packet]
+  // The ring shares the filesystem with the contacts, so its size is a product
+  // decision, set per variant.
+  #ifndef OFFLINE_STORE_SLOTS
+    #define OFFLINE_STORE_SLOTS 24
+  #endif
+  #define OFFLINE_STORE_TTL_SECONDS (24UL * 60UL * 60UL)
+  #define OFFLINE_STORE_FLUSH_BATCH 2       // records written per loop pass
+  #define OFFLINE_STORE_QUIET_MS 3000       // the app takes a live message well within this
+  #define OFFLINE_STORE_MAX_WAIT_MS 15000   // a steady stream does not hold writes off for ever
+  // -D OFFLINE_STORE_OFF=1 keeps the queue in RAM only: a diagnosis switch.
+  #ifndef OFFLINE_STORE_OFF
+    #define OFFLINE_STORE_OFF 0
+  #endif
+  class OfflineFsStorage : public offline_ring::Storage {
+  public:
+    DataStore* store = nullptr;
+    bool writeSlot(uint16_t slot, const uint8_t* data, size_t len) override;
+    int readSlot(uint16_t slot, uint8_t* buf, size_t cap) override;
+    void removeSlot(uint16_t slot) override;
+    bool writeIndex(const uint8_t* data, size_t len) override;
+    int readIndex(uint8_t* buf, size_t cap) override;
+  };
+  OfflineFsStorage offline_fs;
+  uint32_t offline_slot_seq[OFFLINE_STORE_SLOTS];
+  uint8_t offline_scratch[offline_ring::RECORD_HEADER + OFFLINE_STORE_MAX_FRAME + OFFLINE_ROUTE_MAX];
+  offline_ring::Ring offline_store;
+  unsigned long offline_last_enqueue;   // millis() of the newest queued entry
+  unsigned long offline_pending_since;  // millis() of the oldest unwritten entry, 0 = none
+  // What the last restore did, kept for the heartbeat: the boot line that reports
+  // it is easily lost across a reset (the USB CDC re-enumerates).
+  uint16_t offline_last_restored;
+  uint16_t offline_last_lost;
+  unsigned long offline_beat;
+  void beginOfflineStore();
+  void serviceOfflineStore();   // loop(), only while no BLE link is up
+
+  // Routes of queued messages: the raw copy each one was decoded from, handed to
+  // the app right before the message. Kept in RAM until their record reaches the
+  // store, a handful at a time: loop() drains them quickly.
+  //   WITH_OFFLINE_ROUTES  channel messages, for every app: the official app,
+  //                        meshcore-open and MCO Advanced all take a channel
+  //                        route from the raw copy. Switch off with
+  //                        -D WITH_OFFLINE_ROUTES=0.
+  #ifndef WITH_OFFLINE_ROUTES
+    #define WITH_OFFLINE_ROUTES 1
+  #endif
+#if WITH_OFFLINE_ROUTES
+  #ifndef OFFLINE_ROUTE_POOL_SLOTS
+    #define OFFLINE_ROUTE_POOL_SLOTS 6
+  #endif
+  // The app session that saw an entry's raw copy live; OFFLINE_LIVE_NONE if none.
+  #define OFFLINE_LIVE_NONE 0xFF
+  uint8_t offline_queue_live[OFFLINE_QUEUE_SIZE];
+  uint8_t app_session;   // counts CMD_APP_START, 0 .. OFFLINE_LIVE_NONE - 1
+  struct RoutePoolEntry {
+    uint32_t seq;   // offline_ring::NO_SEQ = free
+    uint16_t len;
+    uint8_t data[OFFLINE_ROUTE_MAX];
+  };
+  RoutePoolEntry route_pool[OFFLINE_ROUTE_POOL_SLOTS];
+  int findPoolRoute(uint32_t seq) const;
+  void keepRoute(int pos, const mesh::Packet* pkt);
+  void emitQueuedRoute(int pos);
+#endif
+
   bool _app_sync_active = false;
   bool _app_sync_original_sent = false;
+  bool _app_sync_route_sent = false;
   uint8_t _app_sync_next_part = 0;
   uint32_t _app_sync_timestamp = 0;
   bool _serial_was_connected = false;
-
-  // Raw RX frames (snr/rssi + raw packet) heard while no app was attached are
-  // buffered so a client can still attach the message route (LogRxData) after it
-  // reconnects. Only channel payloads are kept: the client holds the channel key
-  // and decrypts the frame itself, so the route is its to show. The ring evicts
-  // the oldest entry when full and refuses to replay entries older than the TTL.
-  // Set RAWFEED_DEBUG=1 to trace what the ring keeps and hands over; keep it off
-  // for builds whose Serial port carries the companion protocol.
-  #ifndef RAWFEED_DEBUG
-    #define RAWFEED_DEBUG 0
-  #endif
-  #if RAWFEED_DEBUG
-    #define RAWFEED_LOG(...) Serial.printf("rawfeed: " __VA_ARGS__)
-  #else
-    #define RAWFEED_LOG(...) {}
-  #endif
-  // A variant short of RAM can shrink the ring: every slot is ~264 bytes.
-  #ifndef RAW_FEED_RING_SLOTS
-    #define RAW_FEED_RING_SLOTS 8
-  #endif
-  #define RAW_FEED_DATA_MAX (MAX_TRANS_UNIT + 2)       // [snr][rssi][raw packet]
-  #define RAW_FEED_TTL_MILLIS (6UL * 60UL * 60UL * 1000UL)
-  struct RawFeedEntry {
-    uint32_t at_ms;
-    uint16_t len;
-    uint8_t data[RAW_FEED_DATA_MAX];
-  };
-  RawFeedEntry raw_feed_ring[RAW_FEED_RING_SLOTS];
-  uint8_t raw_feed_next;   // write cursor
-  uint8_t raw_feed_len;    // buffered entries
-  void bufferRawFeed(float snr, float rssi, const uint8_t* raw, int len);
-  bool emitBufferedRawFeed();   // true when one frame was handed to the app
 
   struct AckTableEntry {
     unsigned long msg_sent;
