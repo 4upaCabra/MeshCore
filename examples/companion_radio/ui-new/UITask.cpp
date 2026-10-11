@@ -1010,8 +1010,25 @@ public:
       if (_shutdown_init) {
         display.drawTextCentered(display.width() / 2, content_y + 16, "hibernating...");
       } else {
-        display.drawXbm((display.width() - 32) / 2, content_y, power_icon, 32, 32);
-        display.drawTextCentered(display.width() / 2, display.height() - 8*hdr_size - 2, "hibernate:" PRESS_LABEL);
+        const int line_h = display.getLineH(hdr_size);
+        if (display.height() - content_y >= 32 + 2 * line_h) {
+          display.drawXbm((display.width() - 32) / 2, content_y, power_icon, 32, 32);
+          display.drawTextCentered(display.width() / 2, display.height() - line_h * 2, "hibernate:");
+          display.drawTextCentered(display.width() / 2, display.height() - line_h + 1, PRESS_LABEL);
+        } else {
+          // A small screen (64-px OLED) has no room for the label under the icon:
+          // it goes to the right of it, both centred together.
+          int text_w = display.getTextWidth("hibernate:");
+          const int label_w = display.getTextWidth(PRESS_LABEL);
+          if (label_w > text_w) text_w = label_w;
+          const int x = (display.width() - (32 + 6 + text_w)) / 2;
+          const int y = content_y + (display.height() - content_y - 32) / 2;
+          display.drawXbm(x, y, power_icon, 32, 32);
+          display.setCursor(x + 32 + 6, y + 16 - line_h + 1);
+          display.print("hibernate:");
+          display.setCursor(x + 32 + 6, y + 16 + 1);
+          display.print(PRESS_LABEL);
+        }
       }
     }
     if (_page == HomePage::SETTINGS && _in_settings && _pin_show_until) {
