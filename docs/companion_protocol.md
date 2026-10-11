@@ -1,9 +1,56 @@
 # Companion Protocol
 
-- **Last Updated**: 2026-03-08
+- **Last Updated**: 2026-10-11
 - **Protocol Version**: Companion Firmware v1.12.0+
 
 > NOTE: This document is still in development. Some information may be inaccurate.
+
+## Private framed companion packets (`0xED`, `FR01`)
+
+Firmware compiled with `WITH_COMPANION_FRAME_FRAGMENTS` can fragment
+firmware-to-app companion frames larger than `MAX_FRAME_SIZE` (176 bytes). When
+compiled in, this private extension is enabled only when the node setting
+**Framed packets** is on (the default) and `CMD_APP_START` contains `frmfrg1` in
+the comma-separated application capability list, for example
+`MeshCoreOpen;cap=frmfrg1,mctxt,mcmp,aeic`. It is independent of the companion
+protocol version.
+
+Frames of 176 bytes or fewer are unchanged. A fragment is at most 176 bytes:
+
+```
+Byte 0       0xED
+Bytes 1-4    ASCII "FR01"
+Byte 5       flags (bit 0: queued/requires ACK; bits 1-7: zero)
+Bytes 6-7    fragment ID (uint16 little-endian, zero is not used)
+Byte 8       fragment index (zero based)
+Byte 9       fragment count
+Byte 10      original companion frame type
+Bytes 11-12  original frame length (uint16 little-endian)
+Bytes 13-14  chunk offset (uint16 little-endian)
+Bytes 15+    chunk bytes
+```
+
+The header is 15 bytes, the chunk is at most 161 bytes, and FR01 limits the
+original frame to 259 bytes (two fragments). RAW_DATA, CONTROL_DATA and
+LOG_RX_DATA are best-effort live frames and use flags `0`. Queued frames use bit
+0 and are advanced only after an ACK in the next `CMD_SYNC_NEXT_MESSAGE`:
+
+```
+Byte 0       CMD_SYNC_NEXT_MESSAGE (0x0A)
+Byte 1       flags (bit 0: fragment ACK present; bits 1-7: zero)
+Bytes 2-3    fragment ID (uint16 little-endian)
+Byte 4       fragment index
+```
+
+A syntactically valid stale ACK is ignored, including after **Framed packets**
+is switched off. Unknown flag bits are rejected. Apps without the capability,
+or nodes with the setting off, retain legacy delivery. Long queued frames use a
+small fixed RAM pool while they are in flight; the original frame (up to 259
+bytes) is written into the offline-store record, so it survives a reboot, while
+the RAM pool itself is rebuilt at boot. Malformed `0xED` frames and unsupported
+`FR02`-`FR99` versions must be dropped rather than passed to the normal
+companion parser. A future official `0x91` format is a separate wire protocol
+and is not negotiated by this section.
 
 This document provides a comprehensive guide for communicating with MeshCore devices over Bluetooth Low Energy (BLE).
 
