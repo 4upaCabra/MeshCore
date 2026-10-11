@@ -305,6 +305,9 @@ bool MyMesh::Frame::isChannelMsg() const {
 }
 
 void MyMesh::addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags) {
+  // Frame::buf holds MAX_FRAME_SIZE bytes: a longer frame would overflow it and
+  // a non-positive length makes no sense.
+  if (!frame || len <= 0 || len > MAX_FRAME_SIZE) return;
   if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
     MESH_DEBUG_PRINTLN("WARN: offline_queue is full!");
     // A multi-part conversion keeps its original raw frame at queue[0] until
