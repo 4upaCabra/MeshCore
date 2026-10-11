@@ -5,11 +5,11 @@
 
 > NOTE: This document is still in development. Some information may be inaccurate.
 
-## Private framed companion packets (`0xED`, `FR01`)
+## Framed companion packets (`0xED`, `FR01`)
 
 Firmware compiled with `WITH_COMPANION_FRAME_FRAGMENTS` can fragment
 firmware-to-app companion frames larger than `MAX_FRAME_SIZE` (176 bytes). When
-compiled in, this private extension is enabled only when the node setting
+compiled in, this extension is enabled only when the node setting
 **Framed packets** is on (the default) and `CMD_APP_START` contains `frmfrg1` in
 the comma-separated application capability list, for example
 `MeshCoreOpen;cap=frmfrg1,mctxt,mcmp,aeic`. It is independent of the companion
