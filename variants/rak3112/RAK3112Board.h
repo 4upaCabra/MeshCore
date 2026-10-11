@@ -13,7 +13,7 @@
 #endif
 #define  PIN_ADC_CTRL_ACTIVE    LOW
 #define  PIN_ADC_CTRL_INACTIVE  HIGH
-#define  ADC_MULTIPLIER   (3 * 1.73 * 1.187 * 1000)
+#define  BATT_DIVIDER     (3 * 1.73f * 1.187f)   // battery divider ratio, the default multiplier
 #define  BATTERY_SAMPLES 8
 
 class RAK3112Board : public ESP32Board {
@@ -49,6 +49,18 @@ public:
     }
   }
 
+  // Battery divider ratio. 0 in adc_mult means the board default; prefs, the CLI
+  // (set adc.multiplier) and Cal ADC set it. ESP32Board's versions cannot do
+  // this here: they are compiled before PIN_VBAT_READ is defined above.
+  bool setAdcMultiplier(float multiplier) override {
+    adc_mult = multiplier;
+    return true;
+  }
+
+  float getAdcMultiplier() const override {
+    return (adc_mult == 0.0f) ? BATT_DIVIDER : adc_mult;
+  }
+
   uint16_t getBattMilliVolts() override {
     analogReadResolution(12);
 
@@ -58,7 +70,7 @@ public:
     }
     raw = raw / BATTERY_SAMPLES;
 
-    return (ADC_MULTIPLIER * raw) / 4096;
+    return (getAdcMultiplier() * 1000 * raw) / 4096;
   }
 
   const char* getManufacturerName() const override {

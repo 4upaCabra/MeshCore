@@ -24,6 +24,18 @@ public:
     }
   }
 
+  // Battery divider ratio. 0 in adc_mult means the board default; prefs, the CLI
+  // (set adc.multiplier) and Cal ADC set it. ESP32Board's versions cannot do
+  // this here: they are compiled before PIN_VBAT_READ is defined above.
+  bool setAdcMultiplier(float multiplier) override {
+    adc_mult = multiplier;
+    return true;
+  }
+
+  float getAdcMultiplier() const override {
+    return (adc_mult == 0.0f) ? 1.98f : adc_mult;
+  }
+
   uint16_t getBattMilliVolts() override {
     analogReadResolution(10);
 
@@ -33,7 +45,7 @@ public:
     }
     raw = raw / 8;
 
-    return (1.98 * (2 / 1024.0) * raw) * 1000;
+    return (getAdcMultiplier() * (2 / 1024.0) * raw) * 1000;
   }
 
   const char* getManufacturerName() const override {

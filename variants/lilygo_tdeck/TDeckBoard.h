@@ -6,7 +6,7 @@
 
 #define PIN_VBAT_READ 4
 #define BATTERY_SAMPLES 8
-#define ADC_MULTIPLIER (2.0f * 3.3f * 1000)
+#define BATT_DIVIDER 2.0f   // battery divider ratio, the default multiplier
 
 class TDeckBoard : public ESP32Board {
 public:
@@ -22,8 +22,20 @@ public:
     }
   #endif
 
+  // Battery divider ratio. 0 in adc_mult means the board default; prefs, the CLI
+  // (set adc.multiplier) and Cal ADC set it. ESP32Board's versions cannot do
+  // this here: they are compiled before PIN_VBAT_READ is defined above.
+  bool setAdcMultiplier(float multiplier) override {
+    adc_mult = multiplier;
+    return true;
+  }
+
+  float getAdcMultiplier() const override {
+    return (adc_mult == 0.0f) ? BATT_DIVIDER : adc_mult;
+  }
+
   uint16_t getBattMilliVolts() {
-    #if defined(PIN_VBAT_READ) && defined(ADC_MULTIPLIER)
+    #if defined(PIN_VBAT_READ)
       analogReadResolution(12);
 
       uint32_t raw = 0;
@@ -32,7 +44,7 @@ public:
       }
 
       raw = raw / BATTERY_SAMPLES;
-      return (ADC_MULTIPLIER * raw) / 4096;
+      return (getAdcMultiplier() * 3.3f * 1000 * raw) / 4096;
     #else
       return 0;
     #endif
