@@ -340,6 +340,13 @@ void MyMesh::removeOfflineQueueHead() {
   }
 }
 
+void MyMesh::resetAppSyncState() {
+  _app_sync_active = false;
+  _app_sync_original_sent = false;
+  _app_sync_next_part = 0;
+  _app_sync_timestamp = 0;
+}
+
 // Canonical queue frames are stored in the v3 layout (SNR + two reserved bytes).
 // A legacy app (< v3) gets the collapse here: rewrite the code (16->7, 17->8)
 // and drop the three bytes after it. Returns the new length, or 0 when the
@@ -1472,8 +1479,10 @@ bool MyMesh::isValidClientRepeatFreq(uint32_t f) const {
 }
 
 void MyMesh::startInterface(BaseSerialInterface &serial) {
+  resetAppSyncState();
   _serial = &serial;
   serial.enable();
+  _serial_was_connected = serial.isConnected();
 }
 
 void MyMesh::handleCmdFrame(size_t len) {
@@ -1502,6 +1511,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     //  cmd_frame[1..7]  reserved future
     char *app_name = (char *)&cmd_frame[8];
     cmd_frame[len] = 0; // make app_name null terminated
+    resetAppSyncState();
     MESH_DEBUG_PRINTLN("App %s connected", app_name);
     _app_supports_mctxt = companion_app::hasCapability(&cmd_frame[8], len - 8, "mctxt");
     _app_supports_mcmp = companion_app::hasCapability(&cmd_frame[8], len - 8, "mcmp");
@@ -2816,6 +2826,14 @@ bool MyMesh::deferForAppDrain(unsigned long& action_at) {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+
+  // An app that disconnects mid-delivery must not carry its multi-part
+  // app-sync state into the next app: otherwise the next app resumes the
+  // delivery midway, the original queue entry is removed, and the message is
+  // lost.
+  bool app_connected = _serial && _serial->isConnected();
+  if (_serial_was_connected && !app_connected) resetAppSyncState();
+  _serial_was_connected = app_connected;
 
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at) &&
       !deferForAppDrain(_pending_reboot_at)) {

@@ -329,6 +329,7 @@ private:
   void updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, const uint8_t *frame, int len);
   void addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags = 0);
   void removeOfflineQueueHead();
+  void resetAppSyncState();
   // Canonical queue frames are stored in the v3 layout (SNR + two reserved
   // bytes). Collapse a v3 text-message frame to the legacy layout for apps
   // older than v3. Returns the new length, or 0 when not a v3 text frame.
@@ -400,6 +401,7 @@ private:
   bool _app_sync_original_sent = false;
   uint8_t _app_sync_next_part = 0;
   uint32_t _app_sync_timestamp = 0;
+  bool _serial_was_connected = false;
 
   // Raw RX frames (snr/rssi + raw packet) heard while no app was attached are
   // buffered so a client can still attach the message route (LogRxData) after it
