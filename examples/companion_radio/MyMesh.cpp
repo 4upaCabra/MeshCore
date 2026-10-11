@@ -1394,7 +1394,8 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
 #ifdef WITH_COMPANION_CLI
   if (_ts_from_messages)
 #endif
-  if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime()) && !hasRecentAppTimeSet()) {
+  if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime(),
+                      TimeSyncHelper::pubHash(from.id.pub_key)) && !hasRecentAppTimeSet()) {
     auto r = _ts.trySync(getRTCClock(), &sensors, false);
     if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
     else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
@@ -1418,7 +1419,8 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
-  if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime()) && !hasRecentAppTimeSet()) {
+  if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime(),
+                      TimeSyncHelper::pubHash(from.id.pub_key)) && !hasRecentAppTimeSet()) {
     auto r = _ts.trySync(getRTCClock(), &sensors, false);
     if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
     else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
@@ -1431,7 +1433,8 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
-  if (_ts.feedMessage(timestamp, getRTCClock()->getCurrentTime()) && !hasRecentAppTimeSet()) {
+  if (_ts.feedMessage(timestamp, getRTCClock()->getCurrentTime(),
+                      timesync::senderFromChannelText(text)) && !hasRecentAppTimeSet()) {
     auto r = _ts.trySync(getRTCClock(), &sensors, false);
     if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
     else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
@@ -3450,7 +3453,7 @@ void MyMesh::checkCLIRescueCmd() {
       board.reboot();  // doesn't return
     } else if (memcmp(cli_command, "timesync", 8) == 0) {
       char reply[320];
-      _ts.buildReply(reply, getRTCClock());
+      _ts.buildReply(reply, sizeof(reply), getRTCClock());
       Serial.println(reply);
     } else {
       Serial.println("  Error: unknown command");
@@ -3849,7 +3852,7 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     }
 
   } else if (strcmp(cmd, "timesync") == 0) {
-    _ts.buildReply(buf, getRTCClock());
+    _ts.buildReply(buf, 512, getRTCClock());
     char flags[64];
     snprintf(flags, sizeof(flags), "\nAdverts: %s  Msgs: %s",
              _ts_from_adverts ? "on" : "off", _ts_from_messages ? "on" : "off");
@@ -3878,10 +3881,11 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     strcpy(buf, "timesync: state reset (params kept)");
 
   } else if (strcmp(cmd, "timesync params") == 0) {
-    snprintf(buf, 512, "cluster: %lus (default %us)\ndrift:   %lus (default %us)\njump:    %lus (default %us)",
+    snprintf(buf, 512, "cluster: %lus (default %us)\ndrift:   %lus (default %us)\njump:    %lus (default %us)\nback:    %lus (default %us)",
              (unsigned long)_ts.cluster_window,  TS_CLUSTER_WINDOW,
              (unsigned long)_ts.drift_threshold, TS_DRIFT_THRESHOLD,
-             (unsigned long)_ts.max_jump,         TS_MAX_JUMP);
+             (unsigned long)_ts.max_jump,         TS_MAX_JUMP,
+             (unsigned long)_ts.max_back,         TS_MAX_BACK);
   } else if (strncmp(cmd, "set timesync.cluster ", 21) == 0) {
     _ts.cluster_window = atoi(cmd + 21);
     snprintf(buf, 512, "cluster_window: %lus", (unsigned long)_ts.cluster_window);
@@ -3891,6 +3895,9 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   } else if (strncmp(cmd, "set timesync.jump ", 18) == 0) {
     _ts.max_jump = atoi(cmd + 18);
     snprintf(buf, 512, "max_jump: %lus", (unsigned long)_ts.max_jump);
+  } else if (strncmp(cmd, "set timesync.back ", 18) == 0) {
+    _ts.max_back = atoi(cmd + 18);
+    snprintf(buf, 512, "max_back: %lus", (unsigned long)_ts.max_back);
 
   } else if (strcmp(cmd, "get remote.cli") == 0) {
     snprintf(buf, 512, "remote.cli: %s", _remote_cli_enabled ? "on" : "off");

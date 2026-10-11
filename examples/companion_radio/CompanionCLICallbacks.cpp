@@ -85,5 +85,5 @@ bool CompanionCLICallbacks::setRxBoostedGain(bool enable) {
 }
 
 void CompanionCLICallbacks::formatTimesyncReply(char* reply) {
-  _mesh._ts.buildReply(reply, _mesh.getRTCClock());
+  _mesh._ts.buildReply(reply, 320, _mesh.getRTCClock());  // CommonCLI contract: reply >= 320
 }
