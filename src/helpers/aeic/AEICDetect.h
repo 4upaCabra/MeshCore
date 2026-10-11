@@ -9,7 +9,7 @@
 
 // Recognises AEIC image chunks sent by MeshCore Open Advanced. The node does
 // not reassemble or decode the neural image bitstream; this helper only reads
-// the small open chunk header so bubble-ui can show a useful placeholder
+// the small open chunk header so the UI can show a useful placeholder
 // instead of hiding GROUP_DATA 0xAE1C traffic.
 namespace aeic {
 

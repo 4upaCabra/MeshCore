@@ -11,7 +11,7 @@
 // The bit-level shape of an MCOtxt v1 stream: header field widths and escapes,
 // the extended-header formats,
 // the extended-control sub-opcodes, and the prediction context rules. Internal
-// to the codec; this public compatibility pack intentionally ships no encoder.
+// to the codec.
 namespace mcotxt {
 
 static const uint8_t kHeaderFieldBits = 3;
