@@ -1,5 +1,6 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/BatteryPack.h>
 #include "../MyMesh.h"
 #include "../AdcCalibration.h"
 #include "target.h"
@@ -227,18 +228,7 @@ class HomeScreen : public UIScreen {
 
 
   void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
-    // Convert millivolts to percentage
-#ifndef BATT_MIN_MILLIVOLTS
-  #define BATT_MIN_MILLIVOLTS 3000
-#endif
-#ifndef BATT_MAX_MILLIVOLTS
-  #define BATT_MAX_MILLIVOLTS 4200
-#endif
-    const int minMilliVolts = BATT_MIN_MILLIVOLTS;
-    const int maxMilliVolts = BATT_MAX_MILLIVOLTS;
-    int batteryPercentage = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
-    if (batteryPercentage < 0) batteryPercentage = 0; // Clamp to 0%
-    if (batteryPercentage > 100) batteryPercentage = 100; // Clamp to 100%
+    int batteryPercentage = (int)BatteryPack::getPercent(batteryMilliVolts);
 
     // battery icon
     int iconWidth = 24;
@@ -276,7 +266,7 @@ class HomeScreen : public UIScreen {
     if (millis() > next_sensors_refresh) {
       sensors_lpp.reset();
       sensors_nb = 0;
-      sensors_lpp.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
+      sensors_lpp.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattAdcMilliVolts() / 1000.0f);
       sensors.querySensors(0xFF, sensors_lpp);
 
       LPPReader reader (sensors_lpp.getBuffer(), sensors_lpp.getSize());
