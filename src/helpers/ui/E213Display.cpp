@@ -1,4 +1,5 @@
 #include "E213Display.h"
+#include "DisplayPowerHold.h"
 
 #include "../../MeshCore.h"
 
@@ -63,6 +64,7 @@ BaseDisplay* E213Display::detectEInk()
 bool E213Display::begin() {
   if (_init) return true;
 
+  displayPowerHoldBegin();
   powerOn();
   if(display==NULL) {
     display = detectEInk();
@@ -76,6 +78,7 @@ bool E213Display::begin() {
 
   clear();
   display->fastmodeOn(); // Enable fast mode for quicker (partial) updates
+  displayPowerHoldEnd();
 
   return true;
 }
@@ -113,8 +116,10 @@ void E213Display::powerOff() {
 void E213Display::turnOn() {
   if (!_init) begin();
   else if (!_isOn) {
+    displayPowerHoldBegin();
     powerOn();
     display->fastmodeOn();  // Reinitialize display controller after power was cut
+    displayPowerHoldEnd();
   }
   _isOn = true;
 }
@@ -122,16 +127,20 @@ void E213Display::turnOn() {
 void E213Display::turnOff() {
   if (_isOn) {
     // Full refresh before power cut to park pixels and reduce image retention
+    displayPowerHoldBegin();
     display->fastmodeOff();
     display->clear();
     _partial_refresh_count = 0;
+    displayPowerHoldEnd();
     powerOff();
     _isOn = false;
   }
 }
 
 void E213Display::clear() {
+  displayPowerHoldBegin();
   display->clear();
+  displayPowerHoldEnd();
 }
 
 void E213Display::startFrame(ColorVal bkg) {
@@ -247,6 +256,7 @@ void E213Display::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
     last_display_crc_value = crc;
+    displayPowerHoldBegin();
     if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
       display->fastmodeOff();
       display->update();
@@ -256,5 +266,6 @@ void E213Display::endFrame() {
     } else {
       display->update();
     }
+    displayPowerHoldEnd();
   }
 }

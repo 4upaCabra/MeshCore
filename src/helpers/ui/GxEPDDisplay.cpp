@@ -1,5 +1,6 @@
 
 #include "GxEPDDisplay.h"
+#include "DisplayPowerHold.h"
 #ifdef CYRILLIC_SUPPORT
   #include "glcdfont6x8.h"
 #endif
@@ -49,6 +50,9 @@ ColorVal UIColor::corp_blue = GxEPD_BLACK;
 
 
 bool GxEPDDisplay::begin() {
+  // Panel initialisation ends with a full refresh waveform: keep the CPU awake
+  // for the whole of it (see DisplayPowerHold.h).
+  displayPowerHoldBegin();
 #ifdef EINK_SHARED_SPI
   // Radio driver already called SPI.begin() with the correct pins; reuse the bus.
   display.epd2.selectSPI(SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
@@ -81,6 +85,7 @@ bool GxEPDDisplay::begin() {
   pinMode(DISP_BACKLIGHT, OUTPUT);
   #endif
   _init = true;
+  displayPowerHoldEnd();
   return true;
 }
 
@@ -129,7 +134,9 @@ void GxEPDDisplay::turnOff() {
     return;
   }
 #endif
+  displayPowerHoldBegin();
   display.hibernate();
+  displayPowerHoldEnd();
   _partial_refresh_count = 0;
   _init = false;  // force re-init on next turnOn() after hibernate
 }
@@ -140,8 +147,10 @@ void GxEPDDisplay::fullRefreshAndHibernate() {
   // framebuffer while an asynchronous refresh still depends on it.
   waitRefreshIdle();
 #endif
+  displayPowerHoldBegin();
   display.display(false);
   display.hibernate();
+  displayPowerHoldEnd();
 }
 
 // These methods do not exist in featureless builds, preserving the original
@@ -367,6 +376,7 @@ uint16_t GxEPDDisplay::getTextWidth(const char* str) {
 void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
+    displayPowerHoldBegin();
 #if defined(WITH_ASYNC_EINK)
     // Wrap-safe elapsed check (millis() rolls over every ~49 days). The timer is
     // NOT reset while full refresh is suppressed, so turning Antighost back on
@@ -396,5 +406,6 @@ void GxEPDDisplay::endFrame() {
       display.display(true);   // partial refresh
     }
 #endif
+    displayPowerHoldEnd();
   }
 }

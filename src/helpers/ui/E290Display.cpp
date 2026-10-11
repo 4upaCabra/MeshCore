@@ -1,4 +1,5 @@
 #include "E290Display.h"
+#include "DisplayPowerHold.h"
 
 #include "../../MeshCore.h"
 
@@ -27,6 +28,7 @@ ColorVal UIColor::corp_blue = BLACK;
 bool E290Display::begin() {
   if (_init) return true;
 
+  displayPowerHoldBegin();
   powerOn();
   display.begin();
 
@@ -38,6 +40,7 @@ bool E290Display::begin() {
 
   clear();
   display.fastmodeOn(); // Enable fast mode for quicker (partial) updates
+  displayPowerHoldEnd();
 
   return true;
 }
@@ -67,8 +70,10 @@ void E290Display::powerOff() {
 void E290Display::turnOn() {
   if (!_init) begin();
   else if (!_isOn) {
+    displayPowerHoldBegin();
     powerOn();
     display.fastmodeOn();  // Reinitialize display controller after power was cut
+    displayPowerHoldEnd();
   }
   _isOn = true;
 }
@@ -76,16 +81,20 @@ void E290Display::turnOn() {
 void E290Display::turnOff() {
   if (_isOn) {
     // Full refresh before power cut to park pixels and reduce image retention
+    displayPowerHoldBegin();
     display.fastmodeOff();
     display.clear();
     _partial_refresh_count = 0;
+    displayPowerHoldEnd();
     powerOff();
     _isOn = false;
   }
 }
 
 void E290Display::clear() {
+  displayPowerHoldBegin();
   display.clear();
+  displayPowerHoldEnd();
 }
 
 void E290Display::startFrame(ColorVal bkg) {
@@ -198,6 +207,7 @@ void E290Display::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
     last_display_crc_value = crc;
+    displayPowerHoldBegin();
     if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
       display.fastmodeOff();
       display.update();
@@ -207,5 +217,6 @@ void E290Display::endFrame() {
     } else {
       display.update();
     }
+    displayPowerHoldEnd();
   }
 }

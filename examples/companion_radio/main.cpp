@@ -1,5 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
+#include <helpers/ui/DisplayPowerHold.h>
 #include "MyMesh.h"
 
 // ESP32 companion power saving. See agent_docs/power.md.
@@ -207,6 +208,8 @@ static uint32_t esp32_pm_hold_until = 0;
 static bool esp32_pm_window_active = false;
 static uint16_t esp32_pm_yield_ms = ESP32_PM_IDLE_YIELD_MS;
 static uint8_t esp32_pm_applied_mode = 0xFF;
+// Depth of panel work in flight that must not be interrupted by sleep.
+static uint16_t esp32_display_hold = 0;
 
 #if ESP32_PM_USB_GUARD
 static bool esp32_usbHostPresent() {
@@ -230,6 +233,16 @@ static bool esp32_pm_wantsAwake() {
   if (ESP32_PM_LIGHT_SLEEP == 0) return false;   // this transport forbids sleeping
   #if defined(WITH_WIFI_SWITCHING)
     if (the_mesh.commsForbidsSleep()) return true;
+  #endif
+  // An e-ink panel drives its waveform for seconds: sleeping through it leaves the
+  // screen stuck black. The drivers report panel work in flight (see
+  // DisplayPowerHold.h), and that has to outrank every other consideration.
+  if (esp32_display_hold > 0) return true;
+  #if defined(DISPLAY_CLASS) && defined(WITH_ASYNC_EINK)
+    // An async panel is pumped from the loop in stages, but its waveform runs the
+    // whole time: sleeping between stages would break the refresh just as it does
+    // inside one blocking call.
+    if (display.isRefreshBusy()) return true;
   #endif
   #if ESP32_PM_USB_GUARD
     if (esp32_usbHostPresent()) return true;
@@ -308,6 +321,19 @@ static void esp32_servicePmHold() {
       esp32_pm_apb_lock_held = apb;
     }
   }
+}
+
+// Panel work must not be interrupted by sleep — the drivers bracket their refresh
+// with these (see DisplayPowerHold.h). Kept as a counter: a driver may refresh from
+// within another panel call (clear() from begin(), for instance).
+void displayPowerHoldBegin() {
+  esp32_display_hold++;
+  esp32_servicePmHold();
+}
+
+void displayPowerHoldEnd() {
+  if (esp32_display_hold > 0) esp32_display_hold--;
+  esp32_servicePmHold();
 }
 
 // Apply the profile: at startup, and again whenever the setting changes, because
