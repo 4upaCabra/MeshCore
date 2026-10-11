@@ -3881,11 +3881,13 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     strcpy(buf, "timesync: state reset (params kept)");
 
   } else if (strcmp(cmd, "timesync params") == 0) {
-    snprintf(buf, 512, "cluster: %lus (default %us)\ndrift:   %lus (default %us)\njump:    %lus (default %us)\nback:    %lus (default %us)",
+    snprintf(buf, 512, "cluster: %lus (default %us)\ndrift:   %lus (default %us)\njump:    %lus (default %us)\nback:    %lus (default %us)\nage:     %lus (default %us)\nquiet:   %d peers (default %d)",
              (unsigned long)_ts.cluster_window,  TS_CLUSTER_WINDOW,
              (unsigned long)_ts.drift_threshold, TS_DRIFT_THRESHOLD,
              (unsigned long)_ts.max_jump,         TS_MAX_JUMP,
-             (unsigned long)_ts.max_back,         TS_MAX_BACK);
+             (unsigned long)_ts.max_back,         TS_MAX_BACK,
+             (unsigned long)_ts.max_age,          TS_MAX_AGE,
+             _ts.quiet_quorum, TS_QUIET_QUORUM);
   } else if (strncmp(cmd, "set timesync.cluster ", 21) == 0) {
     _ts.cluster_window = atoi(cmd + 21);
     snprintf(buf, 512, "cluster_window: %lus", (unsigned long)_ts.cluster_window);
@@ -3898,6 +3900,12 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   } else if (strncmp(cmd, "set timesync.back ", 18) == 0) {
     _ts.max_back = atoi(cmd + 18);
     snprintf(buf, 512, "max_back: %lus", (unsigned long)_ts.max_back);
+  } else if (strncmp(cmd, "set timesync.age ", 17) == 0) {
+    _ts.max_age = atoi(cmd + 17);
+    snprintf(buf, 512, "max_age: %lus", (unsigned long)_ts.max_age);
+  } else if (strncmp(cmd, "set timesync.quiet ", 19) == 0) {
+    _ts.quiet_quorum = atoi(cmd + 19);
+    snprintf(buf, 512, "quiet_quorum: %d", _ts.quiet_quorum);
 
   } else if (strcmp(cmd, "get remote.cli") == 0) {
     snprintf(buf, 512, "remote.cli: %s", _remote_cli_enabled ? "on" : "off");
