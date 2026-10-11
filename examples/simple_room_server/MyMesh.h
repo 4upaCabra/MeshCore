@@ -22,6 +22,7 @@
 #include <helpers/ClientACL.h>
 #include <helpers/RegionMap.h>
 #include <helpers/RoutingPolicy.h>
+#include <helpers/TimeSyncHelper.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -109,17 +110,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   int next_post_idx;
   PostInfo posts[MAX_UNSYNCED_POSTS];   // cyclic queue
   CayenneLPP telemetry;
-  struct TsSample { uint32_t ts; uint32_t pub_hash; };
-  TsSample _ts_buf[10];
-  int      _ts_buf_pos = 0;
-  int      _ts_buf_count = 0;
-  uint32_t _ts_sync_count = 0;
-  uint32_t _ts_advert_count = 0;
-  uint32_t _ts_valid_count = 0;
-  uint32_t _ts_last_sync = 0;
-  int32_t  _ts_last_adj = 0;
-  int      _ts_best_cluster = 0;
-  void tryTimeSyncFromBuf();
+  TimeSyncHelper _ts;   // shared quorum: one sample per sender, bounded back-step
   RegionEntry* load_stack[8];
   RegionEntry* recv_pkt_region;
   TransportKey default_scope;
