@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <helpers/BatteryPack.h>
 
-// 3% of a Li-ion: below 3.40 V on the profile's OCV curve.
+// 3% of a Li-ion: below ~3.56 V on the profile's curve (BatteryPack).
 #ifndef AUTO_SHUTDOWN_PERCENT
   #define AUTO_SHUTDOWN_PERCENT  3
 #endif

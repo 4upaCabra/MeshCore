@@ -8,10 +8,17 @@ namespace BatteryPack {
 
 // ---- OCV tables (1S cell mV → %). Descending voltage. ----
 
+// Measured, not a textbook OCV table: one full discharge of a 2000 mAh cell in
+// a companion node at a steady load (1740 min), charge left taken as the share
+// of run time left. This cell holds ~3.8 V until less than a fifth is left and
+// then falls fast: the textbook table read 3.8 V as 55% and 3.7 V as 25% where
+// only 18% and 10% were left, so the last third of the gauge passed in an hour.
 static const BatteryOcvPoint kLithium[] = {
-  {4200, 100}, {4100, 90}, {4000, 80}, {3900, 70},
-  {3800, 55},  {3750, 40}, {3700, 25}, {3600, 15},
-  {3500,  8},  {3400,  4}, {3300,  2}, {3000,  0},
+  {4200, 100}, {4120, 91}, {4100, 80}, {4090, 77},
+  {3870,  28}, {3850, 22}, {3830, 21}, {3810, 19},
+  {3800,  18}, {3790, 16}, {3760, 15}, {3720, 11},
+  {3700,  10}, {3650,  8}, {3620,  6}, {3530,  3},
+  {3410,   1}, {3300,  0},
 };
 
 static const BatteryOcvPoint kLiFePO4[] = {
