@@ -8,19 +8,18 @@ namespace BatteryPack {
 
 // ---- OCV tables (1S cell mV → %). Descending voltage. ----
 
-// Measured, not a textbook OCV table: one full discharge of a 2000 mAh cell in
-// a companion node at a steady load (1740 min), charge left taken as the share
-// of run time left. This cell holds ~3.8 V until less than a fifth is left and
-// then falls fast: the textbook table read 3.8 V as 55% and 3.7 V as 25% where
-// only 18% and 10% were left, so the last third of the gauge passed in an hour.
-// 0% is 3.40 V, where the node powers off (AUTO_SHUTDOWN_MILLIVOLTS): the
-// gauge spans the usable range, so it reaches zero as the node goes off (under
-// 1% of the cell was left there), and the points above are rescaled to it.
+// Typical LiPo / Li-ion resting voltage against charge left (the widely used
+// 5%-step chart), with 0% moved to 3.40 V, where the node powers off
+// (AUTO_SHUTDOWN_MILLIVOLTS): about 2% of the cell is left there on this chart,
+// so the steps below are rescaled by those 2% and the gauge reaches zero as the
+// node goes off. One measured discharge was tried instead, but it rested on a
+// constant-load assumption and an unchecked voltage reading, and it read 3.8 V
+// as 17% where a normal cell still holds about 40%.
 static const BatteryOcvPoint kLithium[] = {
-  {4200, 100}, {4120, 91}, {4100, 80}, {4090, 77},
-  {3870,  27}, {3850, 21}, {3830, 20}, {3810, 18},
-  {3800,  17}, {3790, 15}, {3760, 14}, {3720, 10},
-  {3700,   9}, {3650,  7}, {3620,  5}, {3530,  2},
+  {4200, 100}, {4150, 95}, {4110, 90}, {4080, 85}, {4020, 80},
+  {3980,  75}, {3950, 69}, {3910, 64}, {3870, 59}, {3850, 54},
+  {3840,  49}, {3820, 44}, {3800, 39}, {3790, 34}, {3770, 29},
+  {3750,  24}, {3730, 18}, {3710, 13}, {3690,  8}, {3610,  3},
   {3400,   0},
 };
 

@@ -24,20 +24,20 @@ TEST_F(BatteryPackTest, LithiumPlateauBelowLinear) {
       ((3700 - 3000) * 100) / (4200 - 3000);
   const int ocv = BatteryPack::getPercent(3700, BatteryChemistry::Lithium);
   EXPECT_EQ(linear, 58);
-  EXPECT_EQ(ocv, 9);
+  EXPECT_EQ(ocv, 10);
   EXPECT_LT(ocv, linear - 20);
 }
 
 TEST_F(BatteryPackTest, LithiumInterpolatesBetweenPoints) {
-  // Between 4090 (77) and 3870 (27): 27 + 180 * 50 / 220 = 67.
-  EXPECT_EQ(BatteryPack::getPercent(4050, BatteryChemistry::Lithium), 67);
+  // Between 4080 (85) and 4020 (80): 80 + 30 * 5 / 60 = 82.
+  EXPECT_EQ(BatteryPack::getPercent(4050, BatteryChemistry::Lithium), 82);
 }
 
-TEST_F(BatteryPackTest, LithiumFollowsTheMeasuredDischarge) {
-  // Points of the measured discharge the table is built from.
-  EXPECT_EQ(BatteryPack::getPercent(3800, BatteryChemistry::Lithium), 17);
-  EXPECT_EQ(BatteryPack::getPercent(3720, BatteryChemistry::Lithium), 10);
-  EXPECT_EQ(BatteryPack::getPercent(3530, BatteryChemistry::Lithium), 2);
+TEST_F(BatteryPackTest, LithiumTypicalCurve) {
+  // Points of the typical chart the table is built from.
+  EXPECT_EQ(BatteryPack::getPercent(3840, BatteryChemistry::Lithium), 49);
+  EXPECT_EQ(BatteryPack::getPercent(3800, BatteryChemistry::Lithium), 39);
+  EXPECT_EQ(BatteryPack::getPercent(3690, BatteryChemistry::Lithium), 8);
   // 0% is the power-off voltage (3.40 V), and just above it is not 0 yet.
   EXPECT_EQ(BatteryPack::getPercent(3400, BatteryChemistry::Lithium), 0);
   EXPECT_GT(BatteryPack::getPercent(3470, BatteryChemistry::Lithium), 0);
