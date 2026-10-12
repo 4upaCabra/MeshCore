@@ -60,6 +60,18 @@ protected:
   void def(const char* key, bool& value);
   void def(const char* key, ConfigSerializer& sub_obj);
 
+  // A former name of a key (or of a group): read, so files written under the
+  // old name still load, but never written. The current name is def()'d too.
+  template <typename T> void defLegacy(const char* key, T& value) {
+    if (_context->op() == OP::READ) def(key, value);
+  }
+  void defLegacy(const char* key, char* value, size_t max_len) {
+    if (_context->op() == OP::READ) def(key, value, max_len);
+  }
+  void defLegacy(const char* key, void* value, size_t len) {
+    if (_context->op() == OP::READ) def(key, value, len);
+  }
+
   virtual void structure() = 0;
 
 public:

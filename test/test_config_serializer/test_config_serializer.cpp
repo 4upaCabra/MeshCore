@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <string>
 #include "helpers/ConfigSerializer.h"
 
 class NativeFileSystem {
@@ -191,6 +192,49 @@ TEST(ConfigSerializer, LoadSerial_IgnoreUnknowns) {
     bool match = strcmp("Scott", data.name) == 0;
     EXPECT_TRUE(match);
 }
+
+// ── keys with digits, unknown groups, former key names ─────────────────────
+
+TEST(ConfigSerializer, LoadSerial_UnknownKeysWithDigitsAndGroups) {
+    // A file written by another firmware: unknown keys with digits and an
+    // unknown nested group must be skipped, not end the parse.
+    MockInputStream s("{age:" TEST_INT_S ",log_64:3,other:{pulse_06:1,deep:{x2:5}},"
+                      "flags:" TEST_INT_S ",name:\"Scott\"}");
+    TestStruct data;
+    data.flags = 0;
+
+    EXPECT_TRUE(data.loadSerial(s));
+    EXPECT_EQ(TEST_INT, data.age);
+    EXPECT_EQ(TEST_INT, data.flags);
+    EXPECT_STREQ("Scott", data.name);
+}
+
+class RenamedStruct : public ConfigSerializer {
+  protected:
+    void structure() override {
+        def("age", age);
+        defLegacy("years", age);
+        def("name", name, sizeof(name));
+        defLegacy("nick", name, sizeof(name));
+    }
+  public:
+    int32_t age = 0;
+    char    name[16] = {};
+};
+
+TEST(ConfigSerializer, FormerKeyNamesAreReadButNotWritten) {
+    MockInputStream in("{years:" TEST_INT_S ",nick:\"Old\"}");
+    RenamedStruct data;
+    EXPECT_TRUE(data.loadSerial(in));
+    EXPECT_EQ(TEST_INT, data.age);
+    EXPECT_STREQ("Old", data.name);
+
+    MockPrintStream out;
+    EXPECT_TRUE(data.saveSerial(out));
+    const std::string saved(reinterpret_cast<const char*>(out.getBytes()), out.getLength());
+    EXPECT_EQ("{age:" TEST_INT_S ",name:\"Old\"}", saved);
+}
+
 
 TEST(NodePrefs, FemGainSettingsRoundTrip) {
     NodePrefs saved;

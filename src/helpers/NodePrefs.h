@@ -33,8 +33,9 @@
 // binary layout is still *read* once, to migrate, by DataStore::loadPrefsInt().
 //
 // Serializer constraints, worth knowing before adding a field:
-//   * keys are [A-Za-z_] only, max 15 chars — no digits (ConfigSerializer's
-//     is_key_char), so `max_log`, never `log_64`;
+//   * keys are [A-Za-z0-9_], max 15 chars; unknown keys and groups are
+//     skipped, so a file written by another firmware still loads;
+//   * a renamed key keeps its old name as defLegacy(), read but never written;
 //   * any single value, including a hex blob, must stay under 127 chars;
 //   * group names mirror upstream's (radio/gps/repeat/room/power/bridge/comp)
 //     so their future changes to those groups merge cleanly. Ours live in the
