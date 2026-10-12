@@ -165,6 +165,7 @@ class HomeScreen : public UIScreen {
   int           _settings_sel   = 0;
   int           _settings_scroll = 0;   // first visible item index
   int           _settings_visible = 4;  // updated in render(), used in handleInput()
+  bool          _dim_visible = AUTO_OFF_MILLIS > 0;   // CLOCK DIM: nothing to keep lit without auto-off
   bool          _rot_visible = true;    // false for non-eInk displays; set in render()
   bool          _adc_visible = true;    // false for boards without an ADC multiplier
   int           _eff_settings_n = SETTINGS_N;  // effective count (may exclude Rotation, Cal ADC)
@@ -320,9 +321,11 @@ public:
   }
 
   // Settings list position → item index, skipping the rows hidden on this
-  // hardware (Rotation off e-ink, Cal ADC without a multiplier; ROT < ADC).
+  // hardware (CLOCK DIM without auto-off, Rotation off e-ink, Cal ADC without a
+  // multiplier). Checked in list order: DIM < ROT < ADC.
   int settingsVisToIdx(int vis) const {
     int i = vis;
+    if (!_dim_visible && i >= SETTINGS_DIM_IDX) i++;
     if (!_rot_visible && i >= SETTINGS_ROT_IDX) i++;
     if (!_adc_visible && i >= SETTINGS_ADC_IDX) i++;
     return i;
@@ -908,7 +911,8 @@ public:
         const int CURSOR_W = 6 * hdr_size, LINE_H = 8 * hdr_size + 2, Y0 = content_y;
         _rot_visible = _task->isEinkDisplay();
         _adc_visible = AdcCalibration::supported(board);
-        _eff_settings_n = SETTINGS_N - (_rot_visible ? 0 : 1) - (_adc_visible ? 0 : 1);
+        _eff_settings_n = SETTINGS_N - (_dim_visible ? 0 : 1) - (_rot_visible ? 0 : 1) -
+                          (_adc_visible ? 0 : 1);
         _settings_visible = (display.height() - Y0) / LINE_H;
         display.setColor(UIColor::primary_txt);
         for (int vis = _settings_scroll; vis < _eff_settings_n && vis < _settings_scroll + _settings_visible; vis++) {

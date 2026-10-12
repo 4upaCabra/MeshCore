@@ -33,7 +33,7 @@ class UITask : public AbstractUITask {
 #endif
   unsigned long _next_refresh, _auto_off;
   NodePrefs* _node_prefs;
-  int  _clock_dim_mode  = 0;   // 0=AOF (auto-off), 1=USB (no-dim on USB), 2=AON (no-dim on clock page)
+  int  _clock_dim_mode  = 0;   // CLOCK DIM: 0 = ON (auto-off as usual), 1 = OFF (clock page stays lit)
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
