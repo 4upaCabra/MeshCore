@@ -5,6 +5,7 @@
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
 #include <helpers/CompanionAppCapabilities.h>
+#include <helpers/TextMessageAck.h>
 #include <helpers/MCOCompatText.h>
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
 #include <helpers/CompanionFrameFragments.h>
@@ -1262,13 +1263,20 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
     if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
       out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
-      memcpy(&out_frame[1], data, 4);
+      // The app knows the acknowledgement by the hash RESP_CODE_SENT gave it:
+      // its own text's, when the text went out transformed.
+      if (expected_ack_table[i].app_ack) {
+        memcpy(&out_frame[1], &expected_ack_table[i].app_ack, 4);
+      } else {
+        memcpy(&out_frame[1], data, 4);
+      }
       uint32_t trip_time = _ms->getMillis() - expected_ack_table[i].msg_sent;
       memcpy(&out_frame[5], &trip_time, 4);
       _serial->writeFrame(out_frame, 9);
 
       // NOTE: the same ACK can be received multiple times!
       expected_ack_table[i].ack = 0; // clear expected hash, now that we have received ACK
+      expected_ack_table[i].app_ack = 0;
       return expected_ack_table[i].contact;
     }
   }
@@ -2268,6 +2276,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       text[tlen] = 0; // ensure null
       int result;
       uint32_t expected_ack;
+      uint32_t app_ack = 0;
       if (txt_type == TXT_TYPE_CLI_DATA) {
         msg_timestamp = getRTCClock()->getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
         result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout);
@@ -2280,6 +2289,15 @@ void MyMesh::handleCmdFrame(size_t len) {
           send_text = text_buf;
         }
         result = sendMessage(*recipient, msg_timestamp, attempt, send_text, expected_ack, est_timeout);
+        // The acknowledgement on the air names the text that went out, while
+        // an app that computes the hash itself, rather than taking it from
+        // RESP_CODE_SENT, waits for the hash of the text it handed over. When
+        // the two texts differ (transformed by transliteration), the app is
+        // told, and later confirmed, its own hash.
+        if (result != MSG_SEND_FAILED && expected_ack &&
+            text_message_ack::textTransformed(text, send_text)) {
+          app_ack = text_message_ack::expectedAck(msg_timestamp, attempt, text, self_id.pub_key);
+        }
       }
       // TODO: add expected ACK to table
       if (result == MSG_SEND_FAILED) {
@@ -2288,13 +2306,14 @@ void MyMesh::handleCmdFrame(size_t len) {
         if (expected_ack) {
           expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
           expected_ack_table[next_ack_idx].ack = expected_ack;
+          expected_ack_table[next_ack_idx].app_ack = app_ack;
           expected_ack_table[next_ack_idx].contact = recipient;
           next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
         }
 
         out_frame[0] = RESP_CODE_SENT;
         out_frame[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-        memcpy(&out_frame[2], &expected_ack, 4);
+        memcpy(&out_frame[2], app_ack ? &app_ack : &expected_ack, 4);
         memcpy(&out_frame[6], &est_timeout, 4);
         _serial->writeFrame(out_frame, 10);
       }

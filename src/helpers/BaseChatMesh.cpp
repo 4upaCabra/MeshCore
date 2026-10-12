@@ -1,4 +1,5 @@
 #include <helpers/BaseChatMesh.h>
+#include <helpers/TextMessageAck.h>
 #include <Utils.h>
 
 #ifndef SERVER_RESPONSE_DELAY
@@ -437,8 +438,9 @@ mesh::Packet* BaseChatMesh::composeMsgPacket(const ContactInfo& recipient, uint3
   temp[4] = (attempt & 3);
   memcpy(&temp[5], text, text_len + 1);
 
-  // calc expected ACK reply
-  mesh::Utils::sha256((uint8_t *)&expected_ack, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
+  // calc expected ACK reply: the helper hashes these same bytes, so that the
+  // companion can name the hash of a text it sends transformed
+  expected_ack = text_message_ack::expectedAck(timestamp, attempt, text, self_id.pub_key);
 
   int len = 5 + text_len;
   if (attempt > 3) {

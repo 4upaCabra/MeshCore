@@ -569,6 +569,12 @@ private:
   struct AckTableEntry {
     unsigned long msg_sent;
     uint32_t ack;
+    // The hash the app computed over the text it handed over, when that
+    // text went out transformed (transliteration) and [ack] names the text
+    // that went out; 0 when the two are the same. RESP_CODE_SENT and
+    // PUSH_CODE_SEND_CONFIRMED carry this one to the app, which knows no
+    // other (helpers/TextMessageAck.h).
+    uint32_t app_ack;
     ContactInfo* contact;
   };
   #define EXPECTED_ACK_TABLE_SIZE 8
