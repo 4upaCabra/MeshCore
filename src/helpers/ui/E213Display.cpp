@@ -124,6 +124,20 @@ void E213Display::turnOn() {
   _isOn = true;
 }
 
+// Push what is on the canvas with a full refresh and cut the panel's power
+// without clearing it: the last frame stays readable on a node that is off.
+// turnOff() afterwards is a no-op, so it does not wipe the frame either.
+void E213Display::fullRefreshAndHibernate() {
+  if (!_isOn) return;
+  displayPowerHoldBegin();
+  display->fastmodeOff();
+  display->update();
+  _partial_refresh_count = 0;
+  displayPowerHoldEnd();
+  powerOff();
+  _isOn = false;
+}
+
 void E213Display::turnOff() {
   if (_isOn) {
     // Full refresh before power cut to park pixels and reduce image retention

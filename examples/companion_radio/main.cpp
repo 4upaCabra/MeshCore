@@ -172,6 +172,7 @@ MultiSerialInterface interface_manager;
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
+  #include "PowerScreens.h"
   UITask ui_task(&board, &interface_manager);
 #endif
 
@@ -435,12 +436,7 @@ void setup() {
   DisplayDriver* disp = NULL;
   if (display.begin()) {
     disp = &display;
-    disp->startFrame();
-  #ifdef ST7789
-    disp->setTextSize(2);
-  #endif
-    disp->drawTextCentered(disp->width() / 2, 28, "Loading...");
-    disp->endFrame();
+    power_screens::drawBoot(disp);
   }
 #endif
 

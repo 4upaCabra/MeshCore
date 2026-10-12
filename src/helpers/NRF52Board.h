@@ -46,10 +46,14 @@ protected:
   void enterSystemOff(uint8_t reason);
   void configureVoltageWake(uint8_t ain_channel, uint8_t refsel);
   void configureLowVoltageAlert(uint8_t ain_channel, uint8_t low_refsel);
-  virtual void initiateShutdown(uint8_t reason);
 #endif
 
 public:
+#ifdef NRF52_POWER_MANAGEMENT
+  // Board power-down for `reason`; low-voltage reasons also arm the wake on
+  // USB power / a recovered battery. Does not return.
+  virtual void initiateShutdown(uint8_t reason);
+#endif
   NRF52Board(char *otaname) : ota_name(otaname) {}
   virtual void begin();
   virtual uint8_t getStartupReason() const override { return startup_reason; }

@@ -3,10 +3,23 @@
 #include <helpers/BatteryPack.h>
 #include "../MyMesh.h"
 #include "../AdcCalibration.h"
+#include "../PowerScreens.h"
 #include "target.h"
 #include <time.h>
 #if defined(WIFI_SSID) || defined(WITH_WIFI_SWITCHING)
   #include <WiFi.h>
+#endif
+
+// Power off on a flat battery: charge left, by the battery profile's OCV curve
+// (BatteryPack), so it follows the chemistry; 3% of a Li-ion is about 3.35 V.
+// A board may also set AUTO_SHUTDOWN_MILLIVOLTS; either one triggers.
+#ifndef AUTO_SHUTDOWN_PERCENT
+  #define AUTO_SHUTDOWN_PERCENT  3
+#endif
+// Readings below the level needed in a row, 8 s apart: a voltage sag under a
+// transmit burst must not switch the node off.
+#ifndef AUTO_SHUTDOWN_CONFIRM
+  #define AUTO_SHUTDOWN_CONFIRM  3
 #endif
 
 #ifndef AUTO_OFF_MILLIS
@@ -1917,6 +1930,16 @@ void UITask::shutdown(bool restart){
     _saveElapsedToPrefs(true);  // force-save regardless of timer
     _board->reboot();
   } else {
+    // A last frame saying the node is off and how to turn it on; on e-ink it
+    // stays on the panel.
+    if (_display != NULL) {
+      power_screens::drawPowerOff(_display, _low_battery_off);
+      _display->turnOff();   // after the last e-ink frame this keeps the image
+    }
+#if defined(NRF52_POWER_MANAGEMENT)
+    // Arms the wake on USB power / a recovered battery (configureVoltageWake).
+    if (_low_battery_off) static_cast<NRF52Board&>(board).initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
+#endif
     // Power off board including radio, display, GPS and components
     _board->powerOff();
   }
@@ -2082,22 +2105,24 @@ void UITask::loop() {
   vibration.loop();
 #endif
 
-#ifdef AUTO_SHUTDOWN_MILLIVOLTS
+#if AUTO_SHUTDOWN_PERCENT > 0 || defined(AUTO_SHUTDOWN_MILLIVOLTS)
   if (millis() > next_batt_chck) {
-    uint16_t milliVolts = getBattMilliVolts();
-    if (milliVolts > 0 && milliVolts < AUTO_SHUTDOWN_MILLIVOLTS) {
-      if(!board.isExternalPowered()) {
-        if (_display != NULL) {
-          _display->startFrame();
-          _display->setTextSize(1);
-          _display->setColor(UIColor::warning_txt);
-          _display->drawTextCentered(_display->width() / 2, 20, "Low Battery.");
-          _display->drawTextCentered(_display->width() / 2, 40, "Shutting Down!");
-          _display->endFrame();
-          if (_display->isEink() == false) { delay(3000); }
-        }
-        shutdown();
-      }
+    const uint16_t milliVolts = getBattMilliVolts();
+    // Below ~2.5 V there is no battery to speak of (none fitted, or no sense
+    // line): never switch off on that.
+    bool low = milliVolts >= 2500 && !board.isExternalPowered();
+    if (low) {
+      bool below = (AUTO_SHUTDOWN_PERCENT > 0) &&
+                   BatteryPack::getPercent(milliVolts) <= AUTO_SHUTDOWN_PERCENT;
+#ifdef AUTO_SHUTDOWN_MILLIVOLTS
+      below = below || milliVolts < AUTO_SHUTDOWN_MILLIVOLTS;
+#endif
+      low = below;
+    }
+    _low_batt_count = low ? _low_batt_count + 1 : 0;
+    if (_low_batt_count >= AUTO_SHUTDOWN_CONFIRM) {
+      _low_battery_off = true;
+      shutdown();
     }
     next_batt_chck = millis() + 8000;
   }

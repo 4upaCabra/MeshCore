@@ -38,6 +38,8 @@ class UITask : public AbstractUITask {
   unsigned long _alert_expiry;
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
+  uint8_t _low_batt_count = 0;   // consecutive readings below the shutdown level
+  bool _low_battery_off = false; // shutdown() was called for a flat battery
   int next_backlight_btn_check = 0;
   bool _prev_usb_powered = false;
   bool _usb_connected = false;
