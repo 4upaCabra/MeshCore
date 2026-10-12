@@ -2,6 +2,9 @@
 
 #include "ESP32Board.h"
 #include <target.h>
+#include <esp_attr.h>
+
+RTC_NOINIT_ATTR uint32_t esp32_rtc_time_set_marker;
 
 #if defined(ADMIN_PASSWORD) && !defined(DISABLE_WIFI_OTA)   // Repeater or Room Server only
 #include <WiFi.h>

@@ -215,6 +215,12 @@ public:
   }
 };
 
+// Set in RTC memory once something has set the clock. It survives every reset
+// except a power-on, like the clock itself, so after a reboot it tells a time
+// that was really set from the placeholder that merely kept ticking.
+#define ESP32_RTC_TIME_SET_MAGIC 0x54494d45u   // "TIME"
+extern uint32_t esp32_rtc_time_set_marker;
+
 class ESP32RTCClock : public mesh::RTCClock {
   bool time_was_set = false;
 public:
@@ -222,6 +228,7 @@ public:
   void begin() {
     esp_reset_reason_t reason = esp_reset_reason();
     if (reason == ESP_RST_POWERON) {
+      esp32_rtc_time_set_marker = 0;
       // start with some date/time in the recent past
       struct timeval tv;
       tv.tv_sec = 1715770351;  // 15 May 2024, 8:50pm
@@ -229,8 +236,10 @@ public:
     settimeofday(&tv, NULL);
   } else {
       // Anything other than a cold boot keeps the RTC domain alive, so the
-      // time carried over from before the reset is as good as it was then.
-      time_was_set = true;
+      // time carried over from before the reset is as good as it was then:
+      // reliable only if it had been set by then (not after a reboot or a
+      // flash that came before any sync).
+      time_was_set = esp32_rtc_time_set_marker == ESP32_RTC_TIME_SET_MAGIC;
   }
   }
 
@@ -248,6 +257,7 @@ public:
     tv.tv_usec = 0;
     settimeofday(&tv, NULL);
     time_was_set = true;
+    esp32_rtc_time_set_marker = ESP32_RTC_TIME_SET_MAGIC;
   }
 };
 
