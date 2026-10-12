@@ -10,14 +10,7 @@
   #include <WiFi.h>
 #endif
 
-// Power off on a flat battery: charge left, by the battery profile's OCV curve
-// (BatteryPack), so it follows the chemistry; 3% of a Li-ion is about 3.35 V.
-// A board may also set AUTO_SHUTDOWN_MILLIVOLTS; either one triggers.
-#ifndef AUTO_SHUTDOWN_PERCENT
-  #define AUTO_SHUTDOWN_PERCENT  3
-#endif
-// Readings below the level needed in a row, 8 s apart: a voltage sag under a
-// transmit burst must not switch the node off.
+// Power off on a flat battery (power_screens::batteryFlat()).
 #ifndef AUTO_SHUTDOWN_CONFIRM
   #define AUTO_SHUTDOWN_CONFIRM  3
 #endif
@@ -2105,20 +2098,8 @@ void UITask::loop() {
   vibration.loop();
 #endif
 
-#if AUTO_SHUTDOWN_PERCENT > 0 || defined(AUTO_SHUTDOWN_MILLIVOLTS)
   if (millis() > next_batt_chck) {
-    const uint16_t milliVolts = getBattMilliVolts();
-    // Below ~2.5 V there is no battery to speak of (none fitted, or no sense
-    // line): never switch off on that.
-    bool low = milliVolts >= 2500 && !board.isExternalPowered();
-    if (low) {
-      bool below = (AUTO_SHUTDOWN_PERCENT > 0) &&
-                   BatteryPack::getPercent(milliVolts) <= AUTO_SHUTDOWN_PERCENT;
-#ifdef AUTO_SHUTDOWN_MILLIVOLTS
-      below = below || milliVolts < AUTO_SHUTDOWN_MILLIVOLTS;
-#endif
-      low = below;
-    }
+    const bool low = power_screens::batteryFlat(getBattMilliVolts(), board.isExternalPowered());
     _low_batt_count = low ? _low_batt_count + 1 : 0;
     if (_low_batt_count >= AUTO_SHUTDOWN_CONFIRM) {
       _low_battery_off = true;
@@ -2126,7 +2107,6 @@ void UITask::loop() {
     }
     next_batt_chck = millis() + 8000;
   }
-#endif
 }
 
 char UITask::checkDisplayOn(char c) {

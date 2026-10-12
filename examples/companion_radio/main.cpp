@@ -170,9 +170,9 @@ MultiSerialInterface interface_manager;
 #endif
 
 /* GLOBAL OBJECTS */
+#include "PowerScreens.h"
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #include "PowerScreens.h"
   UITask ui_task(&board, &interface_manager);
 #endif
 
@@ -439,6 +439,23 @@ void setup() {
     power_screens::drawBoot(disp);
   }
 #endif
+
+  // A battery too flat to run is caught here, before the radio and the rest of
+  // the start-up draw their peak current: otherwise a nearly empty cell browns
+  // the board out during boot and it restarts in a loop, silently. Two
+  // readings apart, so one noisy sample does not turn the node off.
+  if (power_screens::batteryFlat(board.getBattMilliVolts(), board.isExternalPowered())) {
+    delay(200);
+    if (power_screens::batteryFlat(board.getBattMilliVolts(), board.isExternalPowered())) {
+#ifdef DISPLAY_CLASS
+      if (disp) power_screens::drawPowerOff(disp, true);
+#endif
+#if defined(NRF52_POWER_MANAGEMENT)
+      static_cast<NRF52Board&>(board).initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
+#endif
+      board.powerOff();
+    }
+  }
 
   if (!radio_init()) { halt(); }
 

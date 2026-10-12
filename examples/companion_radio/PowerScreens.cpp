@@ -1,6 +1,12 @@
 #include "PowerScreens.h"
 
 #include <Arduino.h>
+#include <helpers/BatteryPack.h>
+
+// 3% of a Li-ion: below 3.40 V on the profile's OCV curve.
+#ifndef AUTO_SHUTDOWN_PERCENT
+  #define AUTO_SHUTDOWN_PERCENT  3
+#endif
 
 #ifndef POWER_ON_HINT
   #define POWER_ON_HINT "Press RST to turn on"
@@ -52,6 +58,15 @@ void drawPowerOff(DisplayDriver* d, bool low_battery) {
   } else {
     delay(3000);                    // a lit screen goes dark with the node
   }
+}
+
+bool batteryFlat(uint16_t mv, bool external_power) {
+  if (external_power || mv < 2500) return false;
+  if (AUTO_SHUTDOWN_PERCENT > 0 && BatteryPack::getPercent(mv) <= AUTO_SHUTDOWN_PERCENT) return true;
+#ifdef AUTO_SHUTDOWN_MILLIVOLTS
+  if (mv < AUTO_SHUTDOWN_MILLIVOLTS) return true;
+#endif
+  return false;
 }
 
 }  // namespace power_screens
