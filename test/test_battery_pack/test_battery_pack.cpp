@@ -24,23 +24,23 @@ TEST_F(BatteryPackTest, LithiumPlateauBelowLinear) {
       ((3700 - 3000) * 100) / (4200 - 3000);
   const int ocv = BatteryPack::getPercent(3700, BatteryChemistry::Lithium);
   EXPECT_EQ(linear, 58);
-  EXPECT_EQ(ocv, 10);
+  EXPECT_EQ(ocv, 9);
   EXPECT_LT(ocv, linear - 20);
 }
 
 TEST_F(BatteryPackTest, LithiumInterpolatesBetweenPoints) {
-  // Between 4090 (77) and 3870 (28): 28 + 180 * 49 / 220 = 68.
-  EXPECT_EQ(BatteryPack::getPercent(4050, BatteryChemistry::Lithium), 68);
+  // Between 4090 (77) and 3870 (27): 27 + 180 * 50 / 220 = 67.
+  EXPECT_EQ(BatteryPack::getPercent(4050, BatteryChemistry::Lithium), 67);
 }
 
 TEST_F(BatteryPackTest, LithiumFollowsTheMeasuredDischarge) {
   // Points of the measured discharge the table is built from.
-  EXPECT_EQ(BatteryPack::getPercent(3800, BatteryChemistry::Lithium), 18);
-  EXPECT_EQ(BatteryPack::getPercent(3720, BatteryChemistry::Lithium), 11);
-  EXPECT_EQ(BatteryPack::getPercent(3530, BatteryChemistry::Lithium), 3);
-  // The 3% power-off level falls at ~3.56 V, before the cell's steep drop.
-  EXPECT_GT(BatteryPack::getPercent(3560, BatteryChemistry::Lithium), 3);
-  EXPECT_LE(BatteryPack::getPercent(3550, BatteryChemistry::Lithium), 3);
+  EXPECT_EQ(BatteryPack::getPercent(3800, BatteryChemistry::Lithium), 17);
+  EXPECT_EQ(BatteryPack::getPercent(3720, BatteryChemistry::Lithium), 10);
+  EXPECT_EQ(BatteryPack::getPercent(3530, BatteryChemistry::Lithium), 2);
+  // 0% is the power-off voltage (3.40 V), and just above it is not 0 yet.
+  EXPECT_EQ(BatteryPack::getPercent(3400, BatteryChemistry::Lithium), 0);
+  EXPECT_GT(BatteryPack::getPercent(3470, BatteryChemistry::Lithium), 0);
 }
 
 TEST_F(BatteryPackTest, LiFePO4PlateauDiffersFromLithium) {

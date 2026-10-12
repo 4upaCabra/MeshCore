@@ -13,12 +13,15 @@ namespace BatteryPack {
 // of run time left. This cell holds ~3.8 V until less than a fifth is left and
 // then falls fast: the textbook table read 3.8 V as 55% and 3.7 V as 25% where
 // only 18% and 10% were left, so the last third of the gauge passed in an hour.
+// 0% is 3.40 V, where the node powers off (AUTO_SHUTDOWN_MILLIVOLTS): the
+// gauge spans the usable range, so it reaches zero as the node goes off (under
+// 1% of the cell was left there), and the points above are rescaled to it.
 static const BatteryOcvPoint kLithium[] = {
   {4200, 100}, {4120, 91}, {4100, 80}, {4090, 77},
-  {3870,  28}, {3850, 22}, {3830, 21}, {3810, 19},
-  {3800,  18}, {3790, 16}, {3760, 15}, {3720, 11},
-  {3700,  10}, {3650,  8}, {3620,  6}, {3530,  3},
-  {3410,   1}, {3300,  0},
+  {3870,  27}, {3850, 21}, {3830, 20}, {3810, 18},
+  {3800,  17}, {3790, 15}, {3760, 14}, {3720, 10},
+  {3700,   9}, {3650,  7}, {3620,  5}, {3530,  2},
+  {3400,   0},
 };
 
 static const BatteryOcvPoint kLiFePO4[] = {
