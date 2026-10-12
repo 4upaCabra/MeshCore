@@ -2069,12 +2069,18 @@ void MyMesh::begin(bool has_display) {
 
   resetContacts();
   _store->loadContacts(this);
+  // setCurrentTime() marks the clock reliable, so ask before bootstrapping.
+  const bool rtc_was_reliable = getRTCClock()->isTimeReliable();
   uint32_t rtc_before_contacts = getRTCClock()->getCurrentTime();
   bootstrapRTCfromContacts();
   uint32_t rtc_after_contacts = getRTCClock()->getCurrentTime();
-  if (!getRTCClock()->isTimeReliable() && rtc_after_contacts > rtc_before_contacts &&
+  if (!rtc_was_reliable && rtc_after_contacts > rtc_before_contacts &&
       rtc_after_contacts > MIN_VALID_TS && rtc_after_contacts < MAX_VALID_TS) {
     noteTimeSource(TIME_SOURCE_CONTACTS);
+    // The newest contact's time is only a starting point, possibly hours old:
+    // the first quorum must still be able to step it in either direction with
+    // the unset-clock rules, not the seven senders and max_jump of a synced one.
+    _ts.clock_restored = true;
   }
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
@@ -2483,6 +2489,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint32_t curr = getRTCClock()->getCurrentTime();
     if (secs >= curr) {
       getRTCClock()->setCurrentTime(secs);
+      _ts.clock_restored = false;   // the app's time is a real one
       _app_time_lock_until = secs + APP_TIME_HOLDOFF_SECS;
       noteTimeSource(TIME_SOURCE_APP);
       writeOKFrame();
