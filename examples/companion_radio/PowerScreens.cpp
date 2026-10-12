@@ -3,9 +3,15 @@
 #include <Arduino.h>
 #include <helpers/BatteryPack.h>
 
-// 3% of a Li-ion: below ~3.56 V on the profile's curve (BatteryPack).
+// Power off by voltage: the level the node still runs at reliably, under its
+// transmit load, is what matters, not the charge left. 3.40 V until bench
+// measurements give a per-board figure; a board may set its own.
+#ifndef AUTO_SHUTDOWN_MILLIVOLTS
+  #define AUTO_SHUTDOWN_MILLIVOLTS  3400
+#endif
+// Optional extra rule by charge left (BatteryPack curve); off by default.
 #ifndef AUTO_SHUTDOWN_PERCENT
-  #define AUTO_SHUTDOWN_PERCENT  3
+  #define AUTO_SHUTDOWN_PERCENT  0
 #endif
 
 #ifndef POWER_ON_HINT
@@ -63,10 +69,7 @@ void drawPowerOff(DisplayDriver* d, bool low_battery) {
 bool batteryFlat(uint16_t mv, bool external_power) {
   if (external_power || mv < 2500) return false;
   if (AUTO_SHUTDOWN_PERCENT > 0 && BatteryPack::getPercent(mv) <= AUTO_SHUTDOWN_PERCENT) return true;
-#ifdef AUTO_SHUTDOWN_MILLIVOLTS
-  if (mv < AUTO_SHUTDOWN_MILLIVOLTS) return true;
-#endif
-  return false;
+  return mv < AUTO_SHUTDOWN_MILLIVOLTS;
 }
 
 }  // namespace power_screens
