@@ -111,6 +111,21 @@ public:
     setCursor(mid_x - w/2, y);
     print(str);
   }
+  // Ink-centered variant for fixed-cell digit strings (e.g. "17", "08:42"):
+  // centers on the glyphs' actual lit pixels rather than their advance-width
+  // box. Default: identical to drawTextCentered() — override where the active
+  // font's glyphs leave built-in blank space inside their advance cell.
+  virtual void drawDigitsCentered(int mid_x, int y, const char* str) {
+    drawTextCentered(mid_x, y, str);
+  }
+  // How tall drawDigitsCentered() will actually paint for a requested clock-mode
+  // cap height (setTextSize() with sz > 4). Drivers quantise the request to whole
+  // font scales, so what gets painted is NOT reliably cap_px rows: it can be
+  // shorter, and with non-linear font tables it can be TALLER than asked. Layout
+  // that budgets cap_px rows without asking is how the clock digits ended up
+  // running into the widget row below them. Default: honour the request, which
+  // is right for drivers that scale continuously.
+  virtual int getDigitsH(int cap_px) const { return cap_px; }
   virtual void drawTextRightAlign(int x_anch, int y, const char* str) {
     int w = getTextWidth(str);
     setCursor(x_anch - w, y);

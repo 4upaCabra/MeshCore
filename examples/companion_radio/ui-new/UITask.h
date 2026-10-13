@@ -89,6 +89,7 @@ public:
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
+  DisplayDriver* getDisplay() const { return _display; }
   bool isEinkDisplay() const { return _display != nullptr && _display->isEink(); }
   bool isUsbConnected() const { return _usb_connected; }
   uint32_t usbEventMs() const { return _usb_event_ms; }

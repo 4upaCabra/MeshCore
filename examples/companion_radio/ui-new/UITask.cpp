@@ -28,11 +28,23 @@ static unsigned long msgHoldMillis(const NodePrefs* prefs) {
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
+#include "UIExtensions.h"
+
 // Count Unicode code points in a UTF-8 string (non-continuation bytes)
 static int utf8_char_count(const char* s) {
   int n = 0;
   while (*s) { if ((*s & 0xC0) != 0x80) n++; s++; }
   return n;
+}
+
+// Truncate UTF-8 string to at most max_bytes, never cutting in the middle of a multibyte sequence
+static void utf8_truncate(char* s, int max_bytes) {
+  if (!s || max_bytes < 0) return;
+  int len = strlen(s);
+  if (len <= max_bytes) return;
+  int i = max_bytes;
+  while (i > 0 && (s[i] & 0xC0) == 0x80) i--;
+  s[i] = '\0';
 }
 
 // Dynamically pick body text size (2 vs 1) based on actual wrapped lines including '\n'.
@@ -82,7 +94,9 @@ static int calcDynamicBodySize(DisplayDriver& display, const char* msg, int msg_
 #define LED_CYCLE_MILLIS  4000
 #endif
 
+#ifndef LONG_PRESS_MILLIS
 #define LONG_PRESS_MILLIS   1200
+#endif
 
 #ifndef UI_RECENT_LIST_SIZE
   #define UI_RECENT_LIST_SIZE 4
@@ -221,10 +235,6 @@ class HomeScreen : public UIScreen {
   int           _settings_sel   = 0;
   int           _settings_scroll = 0;   // first visible item index
   int           _settings_visible = 4;  // updated in render(), used in handleInput()
-  bool          _dim_visible = AUTO_OFF_MILLIS > 0;   // CLOCK DIM: nothing to keep lit without auto-off
-  bool          _rot_visible = true;    // false for non-eInk displays; set in render()
-  bool          _adc_visible = true;    // false for boards without an ADC multiplier
-  int           _eff_settings_n = SETTINGS_N;  // effective count (may exclude Rotation, Cal ADC)
   unsigned long _pin_show_until = 0;
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
@@ -379,15 +389,29 @@ public:
 #endif
   }
 
-  // Settings list position → item index, skipping the rows hidden on this
-  // hardware (CLOCK DIM without auto-off, Rotation off e-ink, Cal ADC without a
-  // multiplier). Checked in list order: DIM < ROT < ADC.
-  int settingsVisToIdx(int vis) const {
-    int i = vis;
-    if (!_dim_visible && i >= SETTINGS_DIM_IDX) i++;
-    if (!_rot_visible && i >= SETTINGS_ROT_IDX) i++;
-    if (!_adc_visible && i >= SETTINGS_ADC_IDX) i++;
-    return i;
+  int totalSettings() const {
+    const UIExtraSetting* extra = nullptr;
+    return SETTINGS_N - 1 + uiExtraSettings(&extra) + 1;
+  }
+
+  // Settings items hidden for the current hardware (skipped in render + nav).
+  bool isSettingHidden(int i) const {
+    DisplayDriver* d = _task->getDisplay();
+#if AUTO_OFF_MILLIS == 0
+    if (i == SETTINGS_DIM_IDX) return true;
+#endif
+    if (i == SETTINGS_ROT_IDX) return !(d && d->isEink());
+    if (i == SETTINGS_ADC_IDX) return !AdcCalibration::supported(board);
+    const UIExtraSetting* extra = nullptr;
+    int n_extra = uiExtraSettings(&extra);
+    if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
+      int k = i - (SETTINGS_N - 1);
+      if (extra && extra[k].visible && d) {
+        return !extra[k].visible(*d);
+      }
+      return false;
+    }
+    return false;
   }
 
   // Cal ADC confirm screen. Full screen, no header, so it fits a 128x64 OLED:
@@ -395,7 +419,7 @@ public:
   void renderAdcCal(DisplayDriver& display) {
     const AdcCalibration& c = _adccal;
     int sz = (display.width() >= 200) ? 2 : 1;
-    int lh = 8 * sz + 3;
+    int lh = display.getLineH(sz);
     int cx = display.width() / 2;
     int y  = 0;
     char buf[32];
@@ -430,10 +454,10 @@ public:
     display.fillRect(0, 0, display.width(), 12);
     char tmp[80];
     int hdr_size   = (display.width() >= 200) ? 2 : 1;
-    int hdr_line_h = 8 * hdr_size;
+    int hdr_line_h = display.getLineH(hdr_size) - 3;
     int dot_y      = hdr_line_h + 5;
     int content_y  = hdr_line_h + 14;
-    int line_h     = 8 * hdr_size + 3;
+    int line_h     = display.getLineH(hdr_size);
 
     // CLOCK + pending PM: render full-screen like MsgPreviewScreen (no node/battery header)
     if (_page == HomePage::CLOCK && _clock_pm_pending > 0) {
@@ -461,7 +485,7 @@ public:
           snprintf(raw_name, sizeof(raw_name), "(D)%s", info.from_name);
         else
           snprintf(raw_name, sizeof(raw_name), "[%d]%s", info.path_len, info.from_name);
-        if (name_budget < (int)sizeof(raw_name)) raw_name[name_budget] = '\0';
+        utf8_truncate(raw_name, name_budget);
 
         char hdr_left[64];
         snprintf(hdr_left, sizeof(hdr_left), "#%d %s", _clock_pm_pending, raw_name);
@@ -492,8 +516,13 @@ public:
     display.setCursor(0, 2);
     display.print(_node_prefs->node_name);
 
-    // on eink clock page: time sync source right-aligned next to battery
-    if (_page == HomePage::CLOCK && _task->isEinkDisplay()) {
+    char note_buf[32];
+    if (uiHeaderNote(note_buf, sizeof(note_buf))) {
+      display.setTextSize(1);
+      display.drawTextRightAlign(display.width() - 32, 0, note_buf);
+      display.setTextSize(hdr_size);
+    } else if (_page == HomePage::CLOCK && _task->isEinkDisplay()) {
+      // on eink clock page: time sync source right-aligned next to battery
       char srcBuf[40];
       snprintf(srcBuf, sizeof(srcBuf), "%s", the_mesh.getTimeSourceLabel());
       if (the_mesh.getTimeSyncCount() > 0 && the_mesh.getTimeSource() == MyMesh::TIME_SOURCE_ADVERT) {
@@ -520,7 +549,9 @@ public:
       x += 10;
     }
 
-    if (_page == HomePage::FIRST) {
+    if (uiDrawPage((int)_page, display, content_y)) {
+      return 1000;
+    } else if (_page == HomePage::FIRST) {
       display.setColor(UIColor::primary_txt);
       display.setTextSize(2);
       int unrd = _task->getUnreadMsgCount();
@@ -672,13 +703,13 @@ public:
           _task->isBluetoothEnabled() ? bluetooth_on : bluetooth_off,
           32, 32);
       display.setTextSize(hdr_size);
-      display.drawTextCentered(display.width() / 2, display.height() - 8*hdr_size - 2, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, "toggle: " PRESS_LABEL);
 #endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(UIColor::primary_txt);
       display.drawXbm((display.width() - 32) / 2, content_y, advert_icon, 32, 32);
       display.setTextSize(hdr_size);
-      display.drawTextCentered(display.width() / 2, display.height() - 8*hdr_size - 2, "advert: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, "advert: " PRESS_LABEL);
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
       LocationProvider* nmea = sensors.getLocationProvider();
@@ -828,7 +859,7 @@ public:
       display.setTextSize(hdr_size);
 #ifdef WITH_WIFI_SWITCHING
       if (_in_wifi_select) {
-        const int LINE_H_W  = 8 * hdr_size + 2;
+        const int LINE_H_W  = display.getLineH(hdr_size) - 1;
         const int CURSOR_W  = 6 * hdr_size;
         const int visible_w = (display.height() - content_y) / LINE_H_W;
 
@@ -936,7 +967,7 @@ public:
         // Firmware version with the commit hash, e.g. "v1.17.1-6cf6277b" — the boot
         // splash is gone in 3 s, and this is where to check what is flashed. On a
         // 64-px OLED there is no room at content_y + 40: it takes the bottom line.
-        const int ver_h = 8 * hdr_size;
+        const int ver_h = display.getLineH(hdr_size) - 3;
         int ver_y = content_y + 40;
         if (ver_y + ver_h > display.height()) ver_y = display.height() - ver_h;
         if (ver_y >= content_y + 24 + ver_h) {
@@ -947,22 +978,22 @@ public:
         static const char* dim_vals[2]     = { "ON", "OFF" };
 #ifdef WITH_COMPANION_CLI
         static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
-        static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
+        static const char* ts_vals[4]   = { "a+g", "gps", "adv", "off" };
 #endif
-        const int CURSOR_W = 6 * hdr_size, LINE_H = 8 * hdr_size + 2, Y0 = content_y;
-        _rot_visible = _task->isEinkDisplay();
-        _adc_visible = AdcCalibration::supported(board);
-        _eff_settings_n = SETTINGS_N - (_dim_visible ? 0 : 1) - (_rot_visible ? 0 : 1) -
-                          (_adc_visible ? 0 : 1);
+        const int CURSOR_W = display.getTextWidth(">") + 2, LINE_H = display.getLineH(hdr_size) - 1, Y0 = content_y;
         _settings_visible = (display.height() - Y0) / LINE_H;
+        int total_n = totalSettings();
+        const UIExtraSetting* extra_items = nullptr;
+        int n_extra = uiExtraSettings(&extra_items);
+
         display.setColor(UIColor::primary_txt);
-        for (int vis = _settings_scroll; vis < _eff_settings_n && vis < _settings_scroll + _settings_visible; vis++) {
-          // map visual index to logical (skip hidden rows)
-          int i = settingsVisToIdx(vis);
-          int y = Y0 + (vis - _settings_scroll) * LINE_H;
+        int _drawn = 0;
+        for (int i = _settings_scroll; i < total_n && _drawn < _settings_visible; i++) {
+          if (isSettingHidden(i)) continue;
+          int y = Y0 + (_drawn++) * LINE_H;
           display.setColor(UIColor::primary_txt);
           display.setCursor(0, y);
-          display.print(_settings_sel == vis ? ">" : " ");
+          display.print(_settings_sel == i ? ">" : " ");
           display.setCursor(CURSOR_W, y);
           // label
           const char* lbl = "Back";
@@ -991,10 +1022,20 @@ public:
           else if (i == SETTINGS_UNREAD_IDX)  lbl = "Max Unread";
           else if (i == SETTINGS_LOG_IDX)     lbl = "Max Log";
           else if (i == SETTINGS_ADC_IDX)     lbl = "Cal ADC";
+          else if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
+            int k = i - (SETTINGS_N - 1);
+            if (extra_items && extra_items[k].label) lbl = extra_items[k].label;
+          }
           display.print(lbl);
           // value (not for Back)
-          if (i != SETTINGS_BACK_IDX) {
-            char val[12] = "";
+          if (i != total_n - 1) {
+            char val[24] = "";
+            if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
+              int k = i - (SETTINGS_N - 1);
+              if (extra_items && extra_items[k].value) {
+                extra_items[k].value(val, sizeof(val));
+              }
+            } else
 #ifdef WITH_COMPANION_CLI
             if (i == 0) {
               snprintf(val, sizeof(val), "%s", chat_vals[the_mesh.getChatMode()]);
@@ -1193,6 +1234,10 @@ public:
 #endif
     // Settings edit mode absorbs all navigation before standard page switching
     if (_page == HomePage::SETTINGS && _in_settings) {
+      int total_n = totalSettings();
+      const UIExtraSetting* extra_items = nullptr;
+      int n_extra = uiExtraSettings(&extra_items);
+
       // ● long (KEY_CANCEL) or KEY_PREV = exit settings
       if (c == KEY_CANCEL || c == KEY_PREV) {
         _in_settings = false;
@@ -1200,9 +1245,10 @@ public:
       }
       // ↑ (KEY_UP) = previous item, with wrap-around scroll
       if (c == KEY_UP) {
-        _settings_sel = (_settings_sel + _eff_settings_n - 1) % _eff_settings_n;
-        if (_settings_sel == _eff_settings_n - 1) {
-          _settings_scroll = (_eff_settings_n > _settings_visible) ? (_eff_settings_n - _settings_visible) : 0;
+        _settings_sel = (_settings_sel + total_n - 1) % total_n;
+        while (isSettingHidden(_settings_sel)) _settings_sel = (_settings_sel + total_n - 1) % total_n;
+        if (_settings_sel == total_n - 1) {
+          _settings_scroll = (total_n > _settings_visible) ? (total_n - _settings_visible) : 0;
         } else if (_settings_sel < _settings_scroll) {
           _settings_scroll = _settings_sel;
         }
@@ -1210,7 +1256,8 @@ public:
       }
       // ↓ (KEY_DOWN) or KEY_NEXT = next item, with wrap-around scroll
       if (c == KEY_DOWN || c == KEY_NEXT) {
-        _settings_sel = (_settings_sel + 1) % _eff_settings_n;
+        _settings_sel = (_settings_sel + 1) % total_n;
+        while (isSettingHidden(_settings_sel)) _settings_sel = (_settings_sel + 1) % total_n;
         if (_settings_sel == 0) _settings_scroll = 0;
         else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
@@ -1220,46 +1267,50 @@ public:
       // For binary items direction doesn't matter; for multi-value LEFT reverses.
       if (c == KEY_RIGHT || c == KEY_ENTER || c == KEY_LEFT) {
         bool fwd = (c != KEY_LEFT);
-        // map visual sel to logical index (skip hidden rows)
-        int sel = settingsVisToIdx(_settings_sel);
-        if (sel == SETTINGS_BACK_IDX) {
+        if (_settings_sel == total_n - 1) {
           _in_settings = false;
-        } else if (sel == SETTINGS_PM_IDX) {
+        } else if (_settings_sel >= SETTINGS_N - 1 && _settings_sel < SETTINGS_N - 1 + n_extra) {
+          int k = _settings_sel - (SETTINGS_N - 1);
+          if (extra_items && extra_items[k].press) {
+            extra_items[k].press();
+          }
+        } else if (_settings_sel == SETTINGS_PM_IDX) {
           _pm_clock_mode = (_pm_clock_mode + 1) % 2;  // binary — same either way
           _node_prefs->ui_pm_clock_mode = _pm_clock_mode;
           the_mesh.savePrefs();
-        } else if (sel == SETTINGS_DIM_IDX) {
+        } else if (_settings_sel == SETTINGS_DIM_IDX) {
           _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
           the_mesh.savePrefs();
-        } else if (sel == SETTINGS_HOLD_IDX && _node_prefs) {
+        } else if (_settings_sel == SETTINGS_HOLD_IDX && _node_prefs) {
           _node_prefs->ui_msg_hold = (_node_prefs->ui_msg_hold + 1) % 4;
           the_mesh.savePrefs();
 #ifdef WITH_COMPANION_CLI
-        } else if (sel == SETTINGS_C2L_CH_IDX) {
+        } else if (_settings_sel == SETTINGS_C2L_CH_IDX) {
           the_mesh.setCyr2LatChannelsEnabled(!the_mesh.isCyr2LatChannelsEnabled());
-        } else if (sel == SETTINGS_C2L_DM_IDX) {
+        } else if (_settings_sel == SETTINGS_C2L_DM_IDX) {
           the_mesh.setCyr2LatContactsEnabled(!the_mesh.isCyr2LatContactsEnabled());
 #endif
-        } else if (sel == SETTINGS_MCOTXT_IDX) {
+        } else if (_settings_sel == SETTINGS_MCOTXT_IDX) {
           the_mesh.setMCOtxtEnabled(!the_mesh.isMCOtxtEnabled());
-        } else if (sel == SETTINGS_MCMP_IDX) {
+        } else if (_settings_sel == SETTINGS_MCMP_IDX) {
           the_mesh.setMCMPDetectEnabled(!the_mesh.isMCMPDetectEnabled());
-        } else if (sel == SETTINGS_AEIC_IDX) {
+        } else if (_settings_sel == SETTINGS_AEIC_IDX) {
           the_mesh.setAEICDetectEnabled(!the_mesh.isAEICDetectEnabled());
-        } else if (sel == SETTINGS_MCOIMG_IDX) {
+        } else if (_settings_sel == SETTINGS_MCOIMG_IDX) {
           the_mesh.setMCOimgDetectEnabled(!the_mesh.isMCOimgDetectEnabled());
 #ifdef WITH_COMPANION_CLI
-        } else if (sel == 0) {
+        } else if (_settings_sel == 0) {
           int m = the_mesh.getChatMode();
           the_mesh.setChatMode(fwd ? (m + 1) % 4 : (m + 3) % 4);
-        } else if (sel == 1) {
+        } else if (_settings_sel == 1) {
           _pin_show_until = millis() + 3000;
-        } else if (sel == 2) {
+        } else if (_settings_sel == 2) {
+          int n_ts = uiTimeSourceModeCount();
           int m = the_mesh.getTimesyncMode();
-          the_mesh.setTimesyncMode(fwd ? (m + 1) % 3 : (m + 2) % 3);
+          the_mesh.setTimesyncMode(fwd ? (m + 1) % n_ts : (m + n_ts - 1) % n_ts);
 #endif
 #ifdef WITH_WIFI_SWITCHING
-        } else if (sel == SETTINGS_COMMS_IDX) {
+        } else if (_settings_sel == SETTINGS_COMMS_IDX) {
           if (!_wifi_wait && fwd) {
             _in_wifi_select   = true;
             _wifi_sel         = 0;
@@ -1270,13 +1321,13 @@ public:
             WiFi.scanNetworks(true);  // async
           }
 #endif
-        } else if (sel == SETTINGS_ROT_IDX && _node_prefs) {
+        } else if (_settings_sel == SETTINGS_ROT_IDX && _node_prefs) {
           int r = _node_prefs->ui_display_rotation;
           r = fwd ? (r + 1) % 4 : (r + 3) % 4;
           _node_prefs->ui_display_rotation = r;
           _task->setDisplayRotation(r);
           the_mesh.savePrefs();
-        } else if (sel == SETTINGS_UNREAD_IDX && _node_prefs) {
+        } else if (_settings_sel == SETTINGS_UNREAD_IDX && _node_prefs) {
           int idx = _node_prefs->ui_max_unread_idx;
           idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
           _node_prefs->ui_max_unread_idx = idx;
@@ -1284,7 +1335,7 @@ public:
           _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
                                    size_table[_node_prefs->ui_max_log_idx]);
           the_mesh.savePrefs();
-        } else if (sel == SETTINGS_LOG_IDX && _node_prefs) {
+        } else if (_settings_sel == SETTINGS_LOG_IDX && _node_prefs) {
           int idx = _node_prefs->ui_max_log_idx;
           idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
           _node_prefs->ui_max_log_idx = idx;
@@ -1292,7 +1343,7 @@ public:
           _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
                                    size_table[_node_prefs->ui_max_log_idx]);
           the_mesh.savePrefs();
-        } else if (sel == SETTINGS_ADC_IDX) {
+        } else if (_settings_sel == SETTINGS_ADC_IDX) {
           // Measure once on entry; the confirm screen shows that snapshot.
           _adccal.measure(board);
           _in_adccal = true;
@@ -1509,7 +1560,7 @@ public:
       const MsgEntry* p = &_log[idx];
 
       int hdr_size   = (display.width() >= 200) ? 2 : 1;
-      int hdr_line_h = 8 * hdr_size;
+      int hdr_line_h = display.getLineH(hdr_size) - 3;
       int msg_start_y = hdr_line_h + 3;
 
       int body_size = calcDynamicBodySize(display, p->msg, msg_start_y);
@@ -1531,7 +1582,7 @@ public:
         snprintf(raw_name, sizeof(raw_name), "(D)%s", p->from_name);
       else
         snprintf(raw_name, sizeof(raw_name), "[%d]%s", p->path_len, p->from_name);
-      if (name_budget < (int)sizeof(raw_name)) raw_name[name_budget] = '\0';
+      utf8_truncate(raw_name, name_budget);
 
       char hdr_left[64];
       snprintf(hdr_left, sizeof(hdr_left), "#%d/%d %s",
@@ -1559,7 +1610,7 @@ public:
 
     // 1. Metrics
     int hdr_size    = (display.width() >= 200) ? 2 : 1;
-    int hdr_line_h  = 8 * hdr_size;
+    int hdr_line_h  = display.getLineH(hdr_size) - 3;
     int msg_start_y = hdr_line_h + 3;
 
     int body_size = calcDynamicBodySize(display, p->msg, msg_start_y);
@@ -1583,7 +1634,7 @@ public:
       snprintf(raw_name, sizeof(raw_name), "(D)%s", p->from_name);
     else
       snprintf(raw_name, sizeof(raw_name), "[%d]%s", p->path_len, p->from_name);
-    if (name_budget < (int)sizeof(raw_name)) raw_name[name_budget] = '\0';
+    utf8_truncate(raw_name, name_budget);
 
     char hdr_left[64];
     snprintf(hdr_left, sizeof(hdr_left), "#%d %s", num_unread, raw_name);
@@ -1707,6 +1758,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (_node_prefs != NULL) {
       _display->setRotation(_node_prefs->ui_display_rotation);
     }
+    uiBegin(*_display, _node_prefs);
     _display->turnOn();
 
     _display->startFrame();
