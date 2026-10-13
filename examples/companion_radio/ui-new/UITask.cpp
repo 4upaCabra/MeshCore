@@ -164,32 +164,33 @@ public:
   }
 
   int render(DisplayDriver& display) override {
-    // meshcore logo
+    // Orientation-aware layout: stack logo + text lines and centre the whole
+    // block vertically, so it looks balanced in both landscape and portrait.
+    const int W = display.width();
+    const int H = display.height();
+    const int logoW = 128, logoH = 13;
+    const int lh = display.getLineH(1);   // small-text line height
+
+    display.setTextSize(1);
+    int lines = 3 + (_commit_info[0] ? 1 : 0);   // website, version, date (+commit)
+    int blockH = logoH + 6 + lines * lh;
+    int y = (H - blockH) / 2;
+    if (y < 2) y = 2;
+
+    // meshcore logo (centered; clamp x so it never goes off-screen in portrait)
     display.setColor(UIColor::corp_blue);
-    int logoWidth = 128;
-    display.drawXbm((display.width() - logoWidth) / 2, 3, meshcore_logo, logoWidth, 13);
+    int logoX = (W - logoW) / 2;
+    if (logoX < 0) logoX = 0;
+    display.drawXbm(logoX, y, meshcore_logo, logoW, logoH);
+    y += logoH + 6;
 
-    // meshcore website
-    const char* website = "https://meshcore.io";
     display.setColor(UIColor::primary_txt);
-    display.setTextSize(1);
-    uint16_t websiteWidth = display.getTextWidth(website);
-    display.setCursor((display.width() - websiteWidth) / 2, 22);
-    display.print(website);
-
-    // version info
-    display.setColor(UIColor::primary_txt);
-    display.setTextSize(1);
-    display.drawTextCentered(display.width()/2, 35, _version_info);
-
-    // commit hash (small, between version and date)
-    display.setColor(UIColor::secondary_txt);
-    display.setTextSize(1);
+    display.drawTextCentered(W / 2, y, "https://meshcore.io");  y += lh;
+    display.drawTextCentered(W / 2, y, _version_info);          y += lh;
     if (_commit_info[0]) {
-      display.drawTextCentered(display.width()/2, 41, _commit_info);
+      display.drawTextCentered(W / 2, y, _commit_info);         y += lh;
     }
-
-    display.drawTextCentered(display.width()/2, 51, FIRMWARE_BUILD_DATE);
+    display.drawTextCentered(W / 2, y, FIRMWARE_BUILD_DATE);
 
     return 1000;
   }
