@@ -20,7 +20,12 @@ public:
     Serial.printf("[EINK] refresh start partial=%d busy_pin=%d\n", partial ? 1 : 0, digitalRead(PIN_DISPLAY_BUSY));
 #endif
     if (partial && !_using_partial_mode) initPartialWaveform();
-    if (!partial) _using_partial_mode = false;
+    if (!partial) {
+      // Border back to the GxEPD2 setting (follows the full waveform), so a
+      // full refresh still cleans it.
+      _writeCommand(0x3C); _writeData(0x05);
+      _using_partial_mode = false;
+    }
     _writeCommand(0x22);
     _writeData(partial ? 0xcf : 0xf7);   // 0xCF — как в рабочем драйвере панели, а не 0xCC
     _writeCommand(0x20);
@@ -111,14 +116,10 @@ private:
     // частичного обновления и своя таблица волновой формы. Перенесено из
     // рабочего драйвера heltec-eink-modules (DEPG0290BNS800/mode.cpp), который
     // на этой плате действительно рисует, — вместо чужой таблицы GxEPD2.
-    _writeCommand(0x3C); _writeData(0x60);                                       // форма границы
+    _writeCommand(0x3C); _writeData(0x80);   // граница на VCOM: не возбуждается, не мигает
     _writeCommand(0x04); _writeData(0x41); _writeData(0x00); _writeData(0x32);   // напряжения источников, ±15 В
     _writeCommand(0x32);                                                        // своя таблица
     for (size_t i = 0; i < sizeof(DEPG0290_LUT_PARTIAL); i++) _writeData(DEPG0290_LUT_PARTIAL[i]);
-    _writeCommand(0x37);                                                        // режим ping-pong
-    for (int i = 0; i < 5; i++) _writeData(0x00);
-    _writeData(0x40);
-    for (int i = 0; i < 4; i++) _writeData(0x00);
     _using_partial_mode = true;
   }
 };
