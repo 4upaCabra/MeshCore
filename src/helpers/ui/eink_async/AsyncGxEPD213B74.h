@@ -2,7 +2,13 @@
 
 #include <GxEPD2_BW.h>
 #include "AsyncEinkCommon.h"
-#if defined(EINK_B74_PARTIAL_LUT)
+
+// Partial updates by our own waveform (see startRefreshAsync()); on by default,
+// -D EINK_B74_PARTIAL_LUT=0 goes back to the panel's built-in fast one.
+#ifndef EINK_B74_PARTIAL_LUT
+  #define EINK_B74_PARTIAL_LUT 1
+#endif
+#if EINK_B74_PARTIAL_LUT
   #include "Depg0290PartialLut.h"
 #endif
 
@@ -18,7 +24,7 @@ public:
 
   bool startRefreshAsync(bool partial) {
     if (_operation != Operation::None) return false;
-#if defined(EINK_B74_PARTIAL_LUT)
+#if EINK_B74_PARTIAL_LUT
     // Partial update by our own waveform instead of the panel's built-in fast
     // one (0xFC): that short pulse sets new black but does not pull old black
     // back to white, so text leaves a trail. 0xCF = display mode 2 with the LUT
@@ -56,7 +62,7 @@ public:
 
   bool asyncBusy() const { return _operation != Operation::None; }
 
-#if defined(EINK_B74_PARTIAL_LUT)
+#if EINK_B74_PARTIAL_LUT
   // The partial-update setup of the Vision Master E290 (DEPG0290BNS800, the same
   // SSD1680 controller), whose waveform drives every changed pixel one way only
   // — no inverted pre-pulse, so no flash — but long enough to bring old black
