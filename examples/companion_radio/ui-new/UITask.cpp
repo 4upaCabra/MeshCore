@@ -203,8 +203,8 @@ public:
 
 class HomeScreen : public UIScreen {
   enum HomePage {
+    CLOCK,     // clock + PM preview inline
     FIRST,
-    CLOCK,     // eInk only: large clock + PM preview inline
     RECENT,
     RADIO,
 #ifndef WITH_WIFI_SWITCHING
@@ -549,49 +549,6 @@ public:
     int custom_refresh = uiDrawPage((int)_page, display, content_y);
     if (custom_refresh > 0) {
       return custom_refresh;
-    } else if (_page == HomePage::FIRST) {
-      display.setColor(UIColor::primary_txt);
-      display.setTextSize(2);
-      int unrd = _task->getUnreadMsgCount();
-      if (unrd > 0)
-        sprintf(tmp, "NEW: %d", unrd);
-      else
-        sprintf(tmp, "MSG: %d", _task->getMsgCount());
-      display.drawTextCentered(display.width() / 2, content_y, tmp);
-
-      #ifdef WIFI_SSID
-        IPAddress ip = WiFi.localIP();
-        snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-        display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, display.height() - 10, tmp);
-      #endif
-      if (_task->hasConnection()) {
-        display.setColor(UIColor::primary_txt);
-        display.setTextSize(hdr_size);
-        display.drawTextCentered(display.width() / 2, content_y + 24, "< Connected >");
-#ifdef WITH_WIFI_SWITCHING
-      } else if (the_mesh.isWifiConnected()) {
-        String wip = the_mesh.getWifiIP();
-        snprintf(tmp, sizeof(tmp), "IP:%s", wip.c_str());
-        display.setColor(UIColor::primary_txt);
-        display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
-      } else if (the_mesh.isWifiConnecting()) {
-        display.setColor(UIColor::secondary_txt);
-        display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, content_y + 24, "WiFi...");
-#endif
-      } else if (the_mesh.getBLEPin() != 0) {
-#ifdef WITH_WIFI_SWITCHING
-        if (the_mesh.getWifiPrefs()->comms_mode != COMMS_MODE_WIFI)
-#endif
-        {
-          display.setColor(UIColor::warning_txt);
-          display.setTextSize(2);
-          sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
-          display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
-        }
-      }
     } else if (_page == HomePage::CLOCK) {
       // --- Large clock display ---
       _clock_pm_pending = 0;
@@ -647,6 +604,49 @@ public:
         display.drawTextCentered(display.width() / 2, display.height() - 8, sourceBuf);
       }
       return 60000;  // refresh once per minute
+    } else if (_page == HomePage::FIRST) {
+      display.setColor(UIColor::primary_txt);
+      display.setTextSize(2);
+      int unrd = _task->getUnreadMsgCount();
+      if (unrd > 0)
+        sprintf(tmp, "NEW: %d", unrd);
+      else
+        sprintf(tmp, "MSG: %d", _task->getMsgCount());
+      display.drawTextCentered(display.width() / 2, content_y, tmp);
+
+      #ifdef WIFI_SSID
+        IPAddress ip = WiFi.localIP();
+        snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, display.height() - 10, tmp);
+      #endif
+      if (_task->hasConnection()) {
+        display.setColor(UIColor::primary_txt);
+        display.setTextSize(hdr_size);
+        display.drawTextCentered(display.width() / 2, content_y + 24, "< Connected >");
+#ifdef WITH_WIFI_SWITCHING
+      } else if (the_mesh.isWifiConnected()) {
+        String wip = the_mesh.getWifiIP();
+        snprintf(tmp, sizeof(tmp), "IP:%s", wip.c_str());
+        display.setColor(UIColor::primary_txt);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
+      } else if (the_mesh.isWifiConnecting()) {
+        display.setColor(UIColor::secondary_txt);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, content_y + 24, "WiFi...");
+#endif
+      } else if (the_mesh.getBLEPin() != 0) {
+#ifdef WITH_WIFI_SWITCHING
+        if (the_mesh.getWifiPrefs()->comms_mode != COMMS_MODE_WIFI)
+#endif
+        {
+          display.setColor(UIColor::warning_txt);
+          display.setTextSize(2);
+          sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
+          display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
+        }
+      }
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(UIColor::primary_txt);
@@ -1042,8 +1042,8 @@ public:
               snprintf(val, sizeof(val), "%s", show ? the_mesh.getCliPin() : "****");
             } else if (i == 2) {
               int tsm = the_mesh.getTimesyncMode();
-              const char* lbl = (tsm >= 0 && tsm < 3) ? ts_vals[tsm] : uiTimeSourceModeLabel(tsm);
-              snprintf(val, sizeof(val), "%s", lbl ? lbl : "?");
+              const char* ts_lbl = (tsm >= 0 && tsm < 3) ? ts_vals[tsm] : uiTimeSourceModeLabel(tsm);
+              snprintf(val, sizeof(val), "%s", ts_lbl ? ts_lbl : "?");
             } else
 #endif
 #ifdef WITH_WIFI_SWITCHING
