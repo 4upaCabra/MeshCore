@@ -2,6 +2,9 @@
 
 #include <GxEPD2_BW.h>
 #include "AsyncEinkCommon.h"
+#if defined(EINK_B74_PARTIAL_LUT)
+  #include "Depg0290PartialLut.h"
+#endif
 
 // Non-blocking extension for GxEPD2 1.6.4's GxEPD2_213_B74 driver.
 // The command bytes mirror that driver's _Update_Full(), _Update_Part() and
@@ -15,8 +18,19 @@ public:
 
   bool startRefreshAsync(bool partial) {
     if (_operation != Operation::None) return false;
+#if defined(EINK_B74_PARTIAL_LUT)
+    // Partial update by our own waveform instead of the panel's built-in fast
+    // one (0xFC): that short pulse sets new black but does not pull old black
+    // back to white, so text leaves a trail. 0xCF = display mode 2 with the LUT
+    // loaded in the register (see initPartialWaveform()).
+    if (partial && !_using_partial_mode) initPartialWaveform();
+    if (!partial) _using_partial_mode = false;
+    _writeCommand(0x22);
+    _writeData(partial ? 0xcf : 0xf7);
+#else
     _writeCommand(0x22);
     _writeData(partial ? 0xfc : 0xf7);
+#endif
     _writeCommand(0x20);
     start(Operation::Refresh, partial ? partial_refresh_time : full_refresh_time, partial);
     return true;
@@ -36,6 +50,24 @@ public:
   }
 
   bool asyncBusy() const { return _operation != Operation::None; }
+
+#if defined(EINK_B74_PARTIAL_LUT)
+  // The partial-update setup of the Vision Master E290 (DEPG0290BNS800, the same
+  // SSD1680 controller), whose waveform drives every changed pixel one way only
+  // — no inverted pre-pulse, so no flash — but long enough to bring old black
+  // back to white. Loaded again after every panel power-off, which clears it.
+  void initPartialWaveform() {
+    _writeCommand(0x3C); _writeData(0x60);                                       // border waveform
+    _writeCommand(0x04); _writeData(0x41); _writeData(0x00); _writeData(0x32);   // source voltages, +-15 V
+    _writeCommand(0x32);                                                        // waveform LUT
+    for (size_t i = 0; i < sizeof(DEPG0290_LUT_PARTIAL); i++) _writeData(DEPG0290_LUT_PARTIAL[i]);
+    _writeCommand(0x37);                                                        // ping-pong for mode 2
+    for (int i = 0; i < 5; i++) _writeData(0x00);
+    _writeData(0x40);
+    for (int i = 0; i < 4; i++) _writeData(0x00);
+    _using_partial_mode = true;
+  }
+#endif
 
   PollResult pollAsync() {
     if (_operation == Operation::None) return PollResult::Idle;
