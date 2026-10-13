@@ -230,7 +230,7 @@ class HomeScreen : public UIScreen {
   uint8_t _page;
   bool _shutdown_init;
   int _clock_pm_pending;   // PMs queued for inline display on CLOCK page
-  AdvertPath recent[UI_RECENT_LIST_SIZE];
+  AdvertPath recent[ADVERT_PATH_TABLE_SIZE];
 
   bool          _in_settings    = false;
   int           _settings_sel   = 0;
@@ -667,11 +667,14 @@ public:
         }
       }
     } else if (_page == HomePage::RECENT) {
-      the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
+      int visible_rows = (display.height() - content_y) / line_h;
+      if (visible_rows < 1) visible_rows = 1;
+      if (visible_rows > ADVERT_PATH_TABLE_SIZE) visible_rows = ADVERT_PATH_TABLE_SIZE;
+      the_mesh.getRecentlyHeard(recent, visible_rows);
       display.setColor(UIColor::primary_txt);
       display.setTextSize(hdr_size);
       int y = content_y;
-      for (int i = 0; i < UI_RECENT_LIST_SIZE; i++, y += line_h) {
+      for (int i = 0; i < visible_rows; i++) {
         auto a = &recent[i];
         if (a->name[0] == 0) continue;  // empty slot
         int secs = _rtc->getCurrentTime() - a->recv_timestamp;
@@ -689,6 +692,7 @@ public:
         display.drawTextEllipsized(0, y, max_name_width, a->name);
         display.setCursor(display.width() - timestamp_width - 1, y);
         display.print(tmp);
+        y += line_h;
       }
     } else if (_page == HomePage::RADIO) {
       display.setColor(UIColor::secondary_txt);
