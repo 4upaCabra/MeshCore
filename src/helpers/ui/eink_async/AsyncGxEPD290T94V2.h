@@ -2,10 +2,12 @@
 
 #include <GxEPD2_BW.h>
 #include "AsyncEinkCommon.h"
+#include "Depg0290PartialLut.h"
 
 // Non-blocking extension for GxEPD2 1.6.4's GxEPD2_290_T94_V2 driver.
-// This panel has no partial waveform in OTP, so the small LUT below is retained
-// verbatim from the upstream driver (GxEPD2, GPL-3.0).
+// This panel has no partial waveform in OTP. Partial updates use the setup of
+// the Vision Master E290 (same SSD1680 controller, see initPartialWaveform()):
+// GxEPD2's short BN-style table left old black visible, mostly on the dark theme.
 class AsyncGxEPD290T94V2 : public GxEPD2_290_T94_V2 {
 public:
   using PollResult = AsyncEinkPollResult;
@@ -16,9 +18,14 @@ public:
   bool startRefreshAsync(bool partial) {
     if (_operation != Operation::None) return false;
     if (partial && !_using_partial_mode) initPartialWaveform();
-    if (!partial) _using_partial_mode = false;
+    if (!partial) {
+      // Border back to the GxEPD2 setting (follows the full waveform), so a
+      // full refresh still cleans it.
+      _writeCommand(0x3C); _writeData(0x05);
+      _using_partial_mode = false;
+    }
     _writeCommand(0x22);
-    _writeData(partial ? 0xcc : 0xf7);
+    _writeData(partial ? 0xcf : 0xf7);   // 0xCF: mode 2 with the LUT in the register
     _writeCommand(0x20);
     start(Operation::Refresh, partial ? partial_refresh_time : full_refresh_time, partial);
     return true;
@@ -82,29 +89,15 @@ private:
     _operation = Operation::None;
   }
 
+  // The partial-update setup of the Vision Master E290: its waveform drives
+  // every changed pixel one way only — no inverted pre-pulse, so no flash — but
+  // long enough to bring old black back to white. Loaded again after every
+  // panel power-off.
   void initPartialWaveform() {
-    static const uint8_t lut_partial[] PROGMEM = {
-      0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x80, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x40, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-      0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x00, 0x00, 0x00,
-    };
-    _writeCommand(0x32);
-    _writeDataPGM(lut_partial, sizeof(lut_partial));
+    _writeCommand(0x3C); _writeData(0x80);   // border held at VCOM: not driven, does not flash
+    _writeCommand(0x04); _writeData(0x41); _writeData(0x00); _writeData(0x32);   // source voltages, +-15 V
+    _writeCommand(0x32);                                                        // waveform LUT
+    for (size_t i = 0; i < sizeof(DEPG0290_LUT_PARTIAL); i++) _writeData(DEPG0290_LUT_PARTIAL[i]);
     _using_partial_mode = true;
   }
 };
