@@ -1483,6 +1483,7 @@ class MsgPreviewScreen : public UIScreen {
   mesh::RTCClock* _rtc;
 
   #define MAX_UNREAD_MSGS   64   // compile-time array capacity; runtime cap via _max_unread
+  #define MAX_LOG_MSGS      64   // compile-time array capacity; runtime cap via _max_log
   int num_unread;
   int head = MAX_UNREAD_MSGS - 1; // index of latest unread message
 
@@ -1495,9 +1496,21 @@ public:
     char     msg[MAX_TEXT_LEN];
   };
 
-  MsgPreviewScreen(UITask* task, mesh::RTCClock* rtc) : _task(task), _rtc(rtc) { num_unread = 0; }
+  MsgPreviewScreen(UITask* task, mesh::RTCClock* rtc) : _task(task), _rtc(rtc) {
+    num_unread = 0;
+    for (int i = 0; i < MAX_UNREAD_MSGS; i++) unread[i] = nullptr;
+    for (int i = 0; i < MAX_LOG_MSGS; i++) _log[i] = nullptr;
+  }
 
-  #define MAX_LOG_MSGS  64   // compile-time array capacity; runtime cap via _max_log
+  ~MsgPreviewScreen() {
+    for (int i = 0; i < MAX_UNREAD_MSGS; i++) {
+      if (unread[i]) { delete unread[i]; unread[i] = nullptr; }
+    }
+    for (int i = 0; i < MAX_LOG_MSGS; i++) {
+      if (_log[i]) { delete _log[i]; _log[i] = nullptr; }
+    }
+  }
+
   bool _in_history  = false;
   int  _hist_cursor = 0;
 
@@ -1510,8 +1523,8 @@ public:
   }
 
 private:
-  MsgEntry unread[MAX_UNREAD_MSGS];
-  MsgEntry _log[MAX_LOG_MSGS];
+  MsgEntry* unread[MAX_UNREAD_MSGS];
+  MsgEntry* _log[MAX_LOG_MSGS];
   int _log_head  = 0;
   int _log_count = 0;
 
@@ -1522,7 +1535,8 @@ private:
   void pushEntry(const MsgEntry& entry) {
     head = (head + 1) % MAX_UNREAD_MSGS;
     if (num_unread < _max_unread) num_unread++;
-    unread[head] = entry;
+    if (!unread[head]) unread[head] = new MsgEntry();
+    if (unread[head]) *unread[head] = entry;
   }
 
 public:
@@ -1536,7 +1550,8 @@ public:
     p->from_name[sizeof(p->from_name) - 1] = '\0';
     StrHelper::strncpy(p->msg, msg, sizeof(p->msg));
     pushEntry(entry);
-    _log[_log_head] = entry;
+    if (!_log[_log_head]) _log[_log_head] = new MsgEntry();
+    if (_log[_log_head]) *_log[_log_head] = entry;
     _log_head = (_log_head + 1) % MAX_LOG_MSGS;
     if (_log_count < _max_log) _log_count++;
     _in_history = false;  // new message interrupts history browse
@@ -1547,14 +1562,14 @@ public:
 
   // Peek at the current (latest) unread message without consuming it
   const MsgEntry* peekCurrent() const {
-    if (num_unread == 0) return nullptr;
-    return &unread[head];
+    if (num_unread == 0 || !unread[head]) return nullptr;
+    return unread[head];
   }
 
   const MsgEntry* peekLatestPM() const {
     for (int i = 0; i < num_unread; i++) {
-      const MsgEntry* p = &unread[indexFromNewest(i)];
-      if (p->is_pm) return p;
+      const MsgEntry* p = unread[indexFromNewest(i)];
+      if (p && p->is_pm) return p;
     }
     return nullptr;
   }
@@ -1569,14 +1584,16 @@ public:
   bool consumeLatestPM() {
     int target = -1;
     for (int i = 0; i < num_unread; i++) {
-      if (unread[indexFromNewest(i)].is_pm) {
+      const MsgEntry* p = unread[indexFromNewest(i)];
+      if (p && p->is_pm) {
         target = i;
         break;
       }
     }
     if (target < 0) return false;
 
-    static MsgEntry kept[MAX_UNREAD_MSGS];  // static: avoids 6 KB stack allocation
+    MsgEntry* kept[MAX_UNREAD_MSGS];
+    MsgEntry* target_ptr = unread[indexFromNewest(target)];
     int kept_count = 0;
     for (int i = 0; i < num_unread; i++) {
       if (i == target) continue;
@@ -1586,8 +1603,11 @@ public:
     num_unread = 0;
     head = MAX_UNREAD_MSGS - 1;
     for (int i = kept_count - 1; i >= 0; i--) {
-      pushEntry(kept[i]);
+      head = (head + 1) % MAX_UNREAD_MSGS;
+      unread[head] = kept[i];
+      num_unread++;
     }
+    if (target_ptr) delete target_ptr;
     return true;
   }
 
@@ -1597,7 +1617,8 @@ public:
     if (_in_history) {
       if (_log_count == 0) { _in_history = false; return 1000; }
       int idx = (_log_head - _log_count + _hist_cursor + MAX_LOG_MSGS * 2) % MAX_LOG_MSGS;
-      const MsgEntry* p = &_log[idx];
+      const MsgEntry* p = _log[idx];
+      if (!p) return 1000;
 
       int hdr_size   = (display.width() >= 200) ? 2 : 1;
       int hdr_line_h = display.getLineH(hdr_size) - 3;
@@ -1648,7 +1669,8 @@ public:
       return (AUTO_OFF_MILLIS == 0) ? 10000 : 1000;
     }
     if (num_unread == 0) return 1000;
-    auto* p = &unread[head];
+    const MsgEntry* p = unread[head];
+    if (!p) return 1000;
 
     // 1. Metrics
     int hdr_size    = (display.width() >= 200) ? 2 : 1;

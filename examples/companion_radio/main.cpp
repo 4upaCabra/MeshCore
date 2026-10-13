@@ -587,6 +587,9 @@ void setup() {
 
   esp32_setupPower();
 #endif
+#if defined(ESP32)
+  Serial.printf("Setup complete! Free heap: %u, Max block: %u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+#endif
 }
 
 void loop() {

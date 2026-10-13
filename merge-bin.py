@@ -4,7 +4,7 @@
 
 import os
 
-Import("env", "projenv")
+Import("env")
 
 board_config = env.BoardConfig()
 firmware_bin = "${BUILD_DIR}/${PROGNAME}.bin"
