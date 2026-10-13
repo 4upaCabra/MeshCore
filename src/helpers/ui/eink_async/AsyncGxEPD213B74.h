@@ -24,7 +24,12 @@ public:
     // back to white, so text leaves a trail. 0xCF = display mode 2 with the LUT
     // loaded in the register (see initPartialWaveform()).
     if (partial && !_using_partial_mode) initPartialWaveform();
-    if (!partial) _using_partial_mode = false;
+    if (!partial) {
+      // Border back to the B74 setting (follows the full waveform), so a full
+      // refresh still cleans it.
+      _writeCommand(0x3C); _writeData(0x05);
+      _using_partial_mode = false;
+    }
     _writeCommand(0x22);
     _writeData(partial ? 0xcf : 0xf7);
 #else
@@ -57,7 +62,7 @@ public:
   // — no inverted pre-pulse, so no flash — but long enough to bring old black
   // back to white. Loaded again after every panel power-off, which clears it.
   void initPartialWaveform() {
-    _writeCommand(0x3C); _writeData(0x60);                                       // border waveform
+    _writeCommand(0x3C); _writeData(0x80);   // border held at VCOM: not driven, does not flash
     _writeCommand(0x04); _writeData(0x41); _writeData(0x00); _writeData(0x32);   // source voltages, +-15 V
     _writeCommand(0x32);                                                        // waveform LUT
     for (size_t i = 0; i < sizeof(DEPG0290_LUT_PARTIAL); i++) _writeData(DEPG0290_LUT_PARTIAL[i]);
