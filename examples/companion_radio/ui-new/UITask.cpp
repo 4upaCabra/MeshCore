@@ -562,10 +562,20 @@ public:
         snprintf(sourceBuf, sizeof(sourceBuf), "%s %+lds",
                  the_mesh.getTimeSourceLabel(), (long)the_mesh.getTimeLastAdjustment());
       }
+#ifdef CYRILLIC_SUPPORT
+      // Russian short date (native UTF-8 Cyrillic) — shared by e-ink, colour TFT and OLED.
+      static const char* days_ru[]   = {"\xd0\xb2\xd1\x81","\xd0\xbf\xd0\xbd","\xd0\xb2\xd1\x82","\xd1\x81\xd1\x80","\xd1\x87\xd1\x82","\xd0\xbf\xd1\x82","\xd1\x81\xd0\xb1"};
+      static const char* months_ru[] = {"\xd1\x8f\xd0\xbd\xd0\xb2","\xd1\x84\xd0\xb5\xd0\xb2","\xd0\xbc\xd0\xb0\xd1\x80","\xd0\xb0\xd0\xbf\xd1\x80","\xd0\xbc\xd0\xb0\xd0\xb9","\xd0\xb8\xd1\x8e\xd0\xbd","\xd0\xb8\xd1\x8e\xd0\xbb","\xd0\xb0\xd0\xb2\xd0\xb3","\xd1\x81\xd0\xb5\xd0\xbd","\xd0\xbe\xd0\xba\xd1\x82","\xd0\xbd\xd0\xbe\xd1\x8f","\xd0\xb4\xd0\xb5\xd0\xba"};
+#endif
       display.setColor(UIColor::primary_txt);
       if (_task->isEinkDisplay()) {
-        char dateBuf[12];
+        char dateBuf[32];
+#ifdef CYRILLIC_SUPPORT
+        snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
+                 days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+#else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+#endif
         // source shown in header; date uses hdr_size for readability on wide displays
         int date_sz = hdr_size;
         int clock_sz = min(display.width() / 30, (display.height() - 22) / 8);
@@ -574,12 +584,17 @@ public:
         int clock_y = (display.height() - 22 - 8 * clock_sz) / 2;
         if (clock_y < content_y) clock_y = content_y;  // don't overlap page dots
         display.setTextSize(clock_sz);
-        display.drawTextCentered(display.width() / 2, clock_y, timeBuf);
+        display.drawDigitsCentered(display.width() / 2, clock_y, timeBuf);
         display.setTextSize(date_sz);
         display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
       } else if (_task->isColorTFTDisplay()) {
-        char dateBuf[12];
+        char dateBuf[32];
+#ifdef CYRILLIC_SUPPORT
+        snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
+                 days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+#else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+#endif
         // T114 TFT 240×135, virtual canvas 128×64 (SCALE=1.875, Y_OFFSET=7).
         // setTextSize(3) activates glcdfont 6×8 renderer scaled via SCALE_X/Y — same
         // macros as all other primitives, so virtual positions match exactly:
@@ -597,8 +612,13 @@ public:
         display.setTextSize(3);
         display.drawTextCentered(display.width() / 2, content_y, timeBuf);
         display.setTextSize(1);
-        char dateBuf[12];
+        char dateBuf[32];
+#ifdef CYRILLIC_SUPPORT
+        snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
+                 days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+#else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+#endif
         display.drawTextCentered(display.width() / 2, content_y + 24 + 2, dateBuf);
         display.drawTextCentered(display.width() / 2, display.height() - 8, sourceBuf);
       }
