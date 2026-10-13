@@ -447,8 +447,6 @@ public:
 
   int render(DisplayDriver& display) override {
     if (_in_adccal) { renderAdcCal(display); return 60000; }
-    display.setColor(UIColor::title_bkg);
-    display.fillRect(0, 0, display.width(), 12);
     char tmp[80];
     int hdr_size   = (display.width() >= 200) ? 2 : 1;
     int hdr_line_h = display.getLineH(hdr_size) - 3;
