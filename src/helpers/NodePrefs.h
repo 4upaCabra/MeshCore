@@ -113,6 +113,7 @@ public:
   uint8_t  cyr2lat_contacts = 0;
   uint8_t  ui_pm_clock_mode = 0;   // message popup mode: 0=Off, 1=PM/room, 2=All
   uint8_t  ui_clock_dim_mode = 0;
+  uint8_t  ui_msg_hold = 1;   // MSG HOLD: 0 off, 1 5 s (default), 2 15 s, 3 30 s
   uint8_t  ui_display_rotation = 0; // 0-3 (GxEPD2 rotation, 3=default landscape)
   uint8_t  ui_max_unread_idx = 0;  // 0=16, 1=32, 2=64 messages in unread buffer
   uint8_t  ui_max_log_idx = 0;     // 0=16, 1=32, 2=64 messages in history log
@@ -251,6 +252,7 @@ private:
       def("rot", _parent->ui_display_rotation);
       def("pm_mode", _parent->ui_pm_clock_mode);
       def("dim_mode", _parent->ui_clock_dim_mode);
+      def("msg_hold", _parent->ui_msg_hold);
       def("max_unread", _parent->ui_max_unread_idx);
       def("max_log", _parent->ui_max_log_idx);
       def("chg_uptime", _parent->ui_charge_uptime_base);

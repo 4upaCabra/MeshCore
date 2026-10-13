@@ -15,6 +15,16 @@
   #define AUTO_SHUTDOWN_CONFIRM  3
 #endif
 
+// How long a message that just came in stays on screen when the connected app
+// fetches it at once (Settings → MSG HOLD): reading it in the app is no reason
+// to pull it off the device's display a second after it appeared. Off = return
+// home as soon as the queue is empty, as before.
+static unsigned long msgHoldMillis(const NodePrefs* prefs) {
+  static const uint8_t secs[4] = { 0, 5, 15, 30 };
+  const uint8_t v = prefs ? prefs->ui_msg_hold : 1;
+  return secs[v < 4 ? v : 1] * 1000UL;
+}
+
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
@@ -177,10 +187,27 @@ class HomeScreen : public UIScreen {
   AdcCalibration _adccal;
 
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N               = 17;
+  static const int SETTINGS_N               = 18;
   static const int SETTINGS_COMMS_IDX       = 3;
   static const int SETTINGS_PM_IDX          = 4;
   static const int SETTINGS_DIM_IDX         = 5;
+  static const int SETTINGS_HOLD_IDX        = 6;
+  static const int SETTINGS_C2L_CH_IDX      = 7;
+  static const int SETTINGS_C2L_DM_IDX      = 8;
+  static const int SETTINGS_MCOTXT_IDX      = 9;
+  static const int SETTINGS_MCMP_IDX        = 10;
+  static const int SETTINGS_AEIC_IDX        = 11;
+  static const int SETTINGS_MCOIMG_IDX      = 12;
+  static const int SETTINGS_ROT_IDX         = 13;
+  static const int SETTINGS_UNREAD_IDX      = 14;
+  static const int SETTINGS_LOG_IDX         = 15;
+  static const int SETTINGS_ADC_IDX         = 16;
+  static const int SETTINGS_BACK_IDX        = 17;
+#elif defined(WITH_COMPANION_CLI)
+  static const int SETTINGS_N               = 17;
+  static const int SETTINGS_PM_IDX          = 3;
+  static const int SETTINGS_DIM_IDX         = 4;
+  static const int SETTINGS_HOLD_IDX        = 5;
   static const int SETTINGS_C2L_CH_IDX      = 6;
   static const int SETTINGS_C2L_DM_IDX      = 7;
   static const int SETTINGS_MCOTXT_IDX      = 8;
@@ -192,34 +219,20 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_LOG_IDX         = 14;
   static const int SETTINGS_ADC_IDX         = 15;
   static const int SETTINGS_BACK_IDX        = 16;
-#elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N               = 16;
-  static const int SETTINGS_PM_IDX          = 3;
-  static const int SETTINGS_DIM_IDX         = 4;
-  static const int SETTINGS_C2L_CH_IDX      = 5;
-  static const int SETTINGS_C2L_DM_IDX      = 6;
-  static const int SETTINGS_MCOTXT_IDX      = 7;
-  static const int SETTINGS_MCMP_IDX        = 8;
-  static const int SETTINGS_AEIC_IDX        = 9;
-  static const int SETTINGS_MCOIMG_IDX      = 10;
-  static const int SETTINGS_ROT_IDX         = 11;
-  static const int SETTINGS_UNREAD_IDX      = 12;
-  static const int SETTINGS_LOG_IDX         = 13;
-  static const int SETTINGS_ADC_IDX         = 14;
-  static const int SETTINGS_BACK_IDX        = 15;
 #else
-  static const int SETTINGS_N               = 11;
+  static const int SETTINGS_N               = 12;
   static const int SETTINGS_PM_IDX          = 0;
   static const int SETTINGS_DIM_IDX         = 1;
-  static const int SETTINGS_MCOTXT_IDX      = 2;
-  static const int SETTINGS_MCMP_IDX        = 3;
-  static const int SETTINGS_AEIC_IDX        = 4;
-  static const int SETTINGS_MCOIMG_IDX      = 5;
-  static const int SETTINGS_ROT_IDX         = 6;
-  static const int SETTINGS_UNREAD_IDX      = 7;
-  static const int SETTINGS_LOG_IDX         = 8;
-  static const int SETTINGS_ADC_IDX         = 9;
-  static const int SETTINGS_BACK_IDX        = 10;
+  static const int SETTINGS_HOLD_IDX        = 2;
+  static const int SETTINGS_MCOTXT_IDX      = 3;
+  static const int SETTINGS_MCMP_IDX        = 4;
+  static const int SETTINGS_AEIC_IDX        = 5;
+  static const int SETTINGS_MCOIMG_IDX      = 6;
+  static const int SETTINGS_ROT_IDX         = 7;
+  static const int SETTINGS_UNREAD_IDX      = 8;
+  static const int SETTINGS_LOG_IDX         = 9;
+  static const int SETTINGS_ADC_IDX         = 10;
+  static const int SETTINGS_BACK_IDX        = 11;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -937,6 +950,7 @@ public:
 #endif
           if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOCK";
           else if (i == SETTINGS_DIM_IDX)  lbl = "CLOCK DIM";
+          else if (i == SETTINGS_HOLD_IDX) lbl = "MSG HOLD";
 #ifdef WITH_COMPANION_CLI
           else if (i == SETTINGS_C2L_CH_IDX) lbl = "Cyr2Lat Chan";
           else if (i == SETTINGS_C2L_DM_IDX) lbl = "Cyr2Lat DM";
@@ -981,6 +995,9 @@ public:
               snprintf(val, sizeof(val), "%s", pm_clok_vals[_pm_clock_mode]);
             } else if (i == SETTINGS_DIM_IDX) {
               snprintf(val, sizeof(val), "%s", dim_vals[_task->getClockDimMode()]);
+            } else if (i == SETTINGS_HOLD_IDX && _node_prefs) {
+              static const char* hold_vals[4] = { "Off", "5s", "15s", "30s" };
+              snprintf(val, sizeof(val), "%s", hold_vals[_node_prefs->ui_msg_hold < 4 ? _node_prefs->ui_msg_hold : 1]);
 #ifdef WITH_COMPANION_CLI
             } else if (i == SETTINGS_C2L_CH_IDX) {
               snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatChannelsEnabled() ? "On" : "Off");
@@ -1185,6 +1202,9 @@ public:
           the_mesh.savePrefs();
         } else if (sel == SETTINGS_DIM_IDX) {
           _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
+          the_mesh.savePrefs();
+        } else if (sel == SETTINGS_HOLD_IDX && _node_prefs) {
+          _node_prefs->ui_msg_hold = (_node_prefs->ui_msg_hold + 1) % 4;
           the_mesh.savePrefs();
 #ifdef WITH_COMPANION_CLI
         } else if (sel == SETTINGS_C2L_CH_IDX) {
@@ -1808,13 +1828,23 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
-  if (msgcount == 0) {
+  if (msgcount != 0) return;
+  // Queue emptied (the app has taken the messages). A preview that has only just
+  // come up stays until the MSG HOLD time after the message arrived, unless the
+  // user leaves it first; see loop().
+  const unsigned long hold = msgHoldMillis(_node_prefs);
+  if (curr == msg_preview && millis() - _preview_shown_at < hold) {
+    _preview_close_at = _preview_shown_at + hold;
+    if (_preview_close_at == 0) _preview_close_at = 1;
+  } else {
     gotoHomeScreen();
   }
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm) {
   _msgcount = msgcount;
+  _preview_shown_at = millis();
+  _preview_close_at = 0;
 
   bool on_clock = (curr == home) && ((HomeScreen*)home)->isOnClockPage();
 
@@ -1901,6 +1931,7 @@ void UITask::userLedHandler() {
 }
 
 void UITask::setCurrScreen(UIScreen* c) {
+  if (c != msg_preview) _preview_close_at = 0;   // left the preview: nothing to close later
   curr = c;
   _next_refresh = 100;
 }
@@ -1964,6 +1995,10 @@ bool UITask::isButtonPressed() const {
 
 void UITask::loop() {
   char c = 0;
+  if (_preview_close_at && (long)(millis() - _preview_close_at) >= 0) {
+    _preview_close_at = 0;
+    if (curr == msg_preview && _msgcount == 0) gotoHomeScreen();
+  }
 #if UI_HAS_JOYSTICK
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {

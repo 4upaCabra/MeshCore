@@ -32,6 +32,8 @@ class UITask : public AbstractUITask {
   GenericVibration vibration;
 #endif
   unsigned long _next_refresh, _auto_off;
+  unsigned long _preview_shown_at = 0;   // millis() a message last came in
+  unsigned long _preview_close_at = 0;   // deferred return home after the app read it; 0 = none
   NodePrefs* _node_prefs;
   int  _clock_dim_mode  = 0;   // CLOCK DIM: 0 = ON (auto-off as usual), 1 = OFF (clock page stays lit)
   char _alert[80];
