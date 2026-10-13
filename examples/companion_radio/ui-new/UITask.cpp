@@ -1,4 +1,5 @@
 #include "UITask.h"
+#include "UIExtensions.h"
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/BatteryPack.h>
 #include "../MyMesh.h"
@@ -28,7 +29,6 @@ static unsigned long msgHoldMillis(const NodePrefs* prefs) {
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
-#include "UIExtensions.h"
 
 // Count Unicode code points in a UTF-8 string (non-continuation bytes)
 static int utf8_char_count(const char* s) {
@@ -258,7 +258,6 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_UNREAD_IDX      = 14;
   static const int SETTINGS_LOG_IDX         = 15;
   static const int SETTINGS_ADC_IDX         = 16;
-  static const int SETTINGS_BACK_IDX        = 17;
 #elif defined(WITH_COMPANION_CLI)
   static const int SETTINGS_N               = 17;
   static const int SETTINGS_PM_IDX          = 3;
@@ -274,7 +273,6 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_UNREAD_IDX      = 13;
   static const int SETTINGS_LOG_IDX         = 14;
   static const int SETTINGS_ADC_IDX         = 15;
-  static const int SETTINGS_BACK_IDX        = 16;
 #else
   static const int SETTINGS_N               = 12;
   static const int SETTINGS_PM_IDX          = 0;
@@ -288,7 +286,6 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_UNREAD_IDX      = 8;
   static const int SETTINGS_LOG_IDX         = 9;
   static const int SETTINGS_ADC_IDX         = 10;
-  static const int SETTINGS_BACK_IDX        = 11;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -517,7 +514,7 @@ public:
     display.print(_node_prefs->node_name);
 
     char note_buf[32];
-    if (uiHeaderNote(note_buf, sizeof(note_buf))) {
+    if (uiHeaderNote((int)_page, note_buf, sizeof(note_buf))) {
       display.setTextSize(1);
       display.drawTextRightAlign(display.width() - 32, 0, note_buf);
       display.setTextSize(hdr_size);
@@ -549,8 +546,9 @@ public:
       x += 10;
     }
 
-    if (uiDrawPage((int)_page, display, content_y)) {
-      return 1000;
+    int custom_refresh = uiDrawPage((int)_page, display, content_y);
+    if (custom_refresh > 0) {
+      return custom_refresh;
     } else if (_page == HomePage::FIRST) {
       display.setColor(UIColor::primary_txt);
       display.setTextSize(2);
@@ -978,9 +976,9 @@ public:
         static const char* dim_vals[2]     = { "ON", "OFF" };
 #ifdef WITH_COMPANION_CLI
         static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
-        static const char* ts_vals[4]   = { "a+g", "gps", "adv", "off" };
+        static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
 #endif
-        const int CURSOR_W = display.getTextWidth(">") + 2, LINE_H = display.getLineH(hdr_size) - 1, Y0 = content_y;
+        const int CURSOR_W = 6 * hdr_size, LINE_H = display.getLineH(hdr_size) - 1, Y0 = content_y;
         _settings_visible = (display.height() - Y0) / LINE_H;
         int total_n = totalSettings();
         const UIExtraSetting* extra_items = nullptr;
@@ -1043,7 +1041,9 @@ public:
               bool show = _pin_show_until && millis() < _pin_show_until;
               snprintf(val, sizeof(val), "%s", show ? the_mesh.getCliPin() : "****");
             } else if (i == 2) {
-              snprintf(val, sizeof(val), "%s", ts_vals[the_mesh.getTimesyncMode()]);
+              int tsm = the_mesh.getTimesyncMode();
+              const char* lbl = (tsm >= 0 && tsm < 3) ? ts_vals[tsm] : uiTimeSourceModeLabel(tsm);
+              snprintf(val, sizeof(val), "%s", lbl ? lbl : "?");
             } else
 #endif
 #ifdef WITH_WIFI_SWITCHING
@@ -1272,7 +1272,7 @@ public:
         } else if (_settings_sel >= SETTINGS_N - 1 && _settings_sel < SETTINGS_N - 1 + n_extra) {
           int k = _settings_sel - (SETTINGS_N - 1);
           if (extra_items && extra_items[k].press) {
-            extra_items[k].press();
+            extra_items[k].press(fwd);
           }
         } else if (_settings_sel == SETTINGS_PM_IDX) {
           _pm_clock_mode = (_pm_clock_mode + 1) % 2;  // binary — same either way
