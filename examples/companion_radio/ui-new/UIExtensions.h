@@ -31,3 +31,7 @@ int  uiTimeSourceModeCount();
 
 // Label for extra timesync source modes beyond the standard 3. Default: nullptr.
 const char* uiTimeSourceModeLabel(int m);
+
+// Optional custom renderer for message body content (e.g. rich media, images).
+// Returns true if content was rendered, false to fall back to plain text word wrap.
+bool uiDrawMessageContent(DisplayDriver& d, const char* msg, int x, int y, int w, int h);

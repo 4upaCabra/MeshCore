@@ -505,9 +505,11 @@ public:
         display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
         // Message body with dynamic font
-        display.setTextSize(body_size);
-        display.setCursor(0, msg_start_y);
-        display.printWordWrap(info.msg, display.width());
+        if (!uiDrawMessageContent(display, info.msg, 0, msg_start_y, display.width(), display.height() - msg_start_y)) {
+          display.setTextSize(body_size);
+          display.setCursor(0, msg_start_y);
+          display.printWordWrap(info.msg, display.width());
+        }
       }
       return 60000;
     }
@@ -1637,9 +1639,11 @@ public:
       display.setColor(UIColor::primary_txt);
       display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
-      display.setTextSize(body_size);
-      display.setCursor(0, msg_start_y);
-      display.printWordWrap(p->msg, display.width());
+      if (!uiDrawMessageContent(display, p->msg, 0, msg_start_y, display.width(), display.height() - msg_start_y)) {
+        display.setTextSize(body_size);
+        display.setCursor(0, msg_start_y);
+        display.printWordWrap(p->msg, display.width());
+      }
 
       return (AUTO_OFF_MILLIS == 0) ? 10000 : 1000;
     }
@@ -1690,10 +1694,11 @@ public:
     display.setColor(UIColor::primary_txt);
     display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
-    // 6. Message body — word wrap
-    display.setTextSize(body_size);
-    display.setCursor(0, msg_start_y);
-    display.printWordWrap(p->msg, display.width());
+    if (!uiDrawMessageContent(display, p->msg, 0, msg_start_y, display.width(), display.height() - msg_start_y)) {
+      display.setTextSize(body_size);
+      display.setCursor(0, msg_start_y);
+      display.printWordWrap(p->msg, display.width());
+    }
 
     return (AUTO_OFF_MILLIS == 0) ? 10000 : 1000;
   }

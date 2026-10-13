@@ -32,3 +32,13 @@ __attribute__((weak)) const char* uiTimeSourceModeLabel(int m) {
   (void)m;
   return nullptr;
 }
+
+__attribute__((weak)) bool uiDrawMessageContent(DisplayDriver& d, const char* msg, int x, int y, int w, int h) {
+  (void)d;
+  (void)msg;
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  return false;
+}
