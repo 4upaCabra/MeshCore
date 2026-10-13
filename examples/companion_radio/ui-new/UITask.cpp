@@ -244,7 +244,7 @@ class HomeScreen : public UIScreen {
   AdcCalibration _adccal;
 
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N               = 18;
+  static const int SETTINGS_N               = 19;
   static const int SETTINGS_COMMS_IDX       = 3;
   static const int SETTINGS_PM_IDX          = 4;
   static const int SETTINGS_DIM_IDX         = 5;
@@ -259,8 +259,9 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_UNREAD_IDX      = 14;
   static const int SETTINGS_LOG_IDX         = 15;
   static const int SETTINGS_ADC_IDX         = 16;
+  static const int SETTINGS_POWER_IDX       = 17;
 #elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N               = 17;
+  static const int SETTINGS_N               = 18;
   static const int SETTINGS_PM_IDX          = 3;
   static const int SETTINGS_DIM_IDX         = 4;
   static const int SETTINGS_HOLD_IDX        = 5;
@@ -274,8 +275,9 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_UNREAD_IDX      = 13;
   static const int SETTINGS_LOG_IDX         = 14;
   static const int SETTINGS_ADC_IDX         = 15;
+  static const int SETTINGS_POWER_IDX       = 16;
 #else
-  static const int SETTINGS_N               = 12;
+  static const int SETTINGS_N               = 13;
   static const int SETTINGS_PM_IDX          = 0;
   static const int SETTINGS_DIM_IDX         = 1;
   static const int SETTINGS_HOLD_IDX        = 2;
@@ -287,6 +289,7 @@ class HomeScreen : public UIScreen {
   static const int SETTINGS_UNREAD_IDX      = 8;
   static const int SETTINGS_LOG_IDX         = 9;
   static const int SETTINGS_ADC_IDX         = 10;
+  static const int SETTINGS_POWER_IDX       = 11;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -400,6 +403,9 @@ public:
 #endif
     if (i == SETTINGS_ROT_IDX) return !(d && d->isEink());
     if (i == SETTINGS_ADC_IDX) return !AdcCalibration::supported(board);
+#if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING))
+    if (i == SETTINGS_POWER_IDX) return true;
+#endif
     const UIExtraSetting* extra = nullptr;
     int n_extra = uiExtraSettings(&extra);
     if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
@@ -1043,6 +1049,7 @@ public:
           else if (i == SETTINGS_UNREAD_IDX)  lbl = "Max Unread";
           else if (i == SETTINGS_LOG_IDX)     lbl = "Max Log";
           else if (i == SETTINGS_ADC_IDX)     lbl = "Cal ADC";
+          else if (i == SETTINGS_POWER_IDX)   lbl = "Power";
           else if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
             int k = i - (SETTINGS_N - 1);
             if (extra_items && extra_items[k].label) lbl = extra_items[k].label;
@@ -1116,6 +1123,9 @@ public:
             } else if (i == SETTINGS_ADC_IDX) {
               uint16_t mv = board.getBattAdcMilliVolts();
               snprintf(val, sizeof(val), "%u.%02uV", mv / 1000, (mv % 1000) / 10);
+            } else if (i == SETTINGS_POWER_IDX && _node_prefs) {
+              static const char* pmode_vals[4] = { "auto", "off", "cons", "aggr" };
+              snprintf(val, sizeof(val), "%s", pmode_vals[constrain(_node_prefs->power_mode, 0, 3)]);
             }
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
@@ -1370,6 +1380,11 @@ public:
           // Measure once on entry; the confirm screen shows that snapshot.
           _adccal.measure(board);
           _in_adccal = true;
+        } else if (_settings_sel == SETTINGS_POWER_IDX && _node_prefs) {
+          int m = _node_prefs->power_mode;
+          _node_prefs->power_mode = fwd ? (m + 1) % 4 : (m + 3) % 4;
+          _node_prefs->powersaving_enabled = (_node_prefs->power_mode != POWER_MODE_OFF) ? 1 : 0;
+          the_mesh.savePrefs();
         }
         return true;
       }
