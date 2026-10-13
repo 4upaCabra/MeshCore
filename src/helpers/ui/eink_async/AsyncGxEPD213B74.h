@@ -61,10 +61,6 @@ public:
     _writeCommand(0x04); _writeData(0x41); _writeData(0x00); _writeData(0x32);   // source voltages, +-15 V
     _writeCommand(0x32);                                                        // waveform LUT
     for (size_t i = 0; i < sizeof(DEPG0290_LUT_PARTIAL); i++) _writeData(DEPG0290_LUT_PARTIAL[i]);
-    _writeCommand(0x37);                                                        // ping-pong for mode 2
-    for (int i = 0; i < 5; i++) _writeData(0x00);
-    _writeData(0x40);
-    for (int i = 0; i < 4; i++) _writeData(0x00);
     _using_partial_mode = true;
   }
 #endif
