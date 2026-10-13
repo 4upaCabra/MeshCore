@@ -28,6 +28,52 @@ static unsigned long msgHoldMillis(const NodePrefs* prefs) {
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
+// Count Unicode code points in a UTF-8 string (non-continuation bytes)
+static int utf8_char_count(const char* s) {
+  int n = 0;
+  while (*s) { if ((*s & 0xC0) != 0x80) n++; s++; }
+  return n;
+}
+
+// Dynamically pick body text size (2 vs 1) based on actual wrapped lines including '\n'.
+// Size 2 is used whenever the message fits into available vertical lines (body2_lines >= 1).
+static int calcDynamicBodySize(DisplayDriver& display, const char* msg, int msg_start_y) {
+  int msg_len     = utf8_char_count(msg);
+  int body2_lines = (display.height() - msg_start_y) / 16;
+  int body2_cpl   = display.width() / 12;
+  int sim_lines   = 0;
+  if (body2_lines >= 1 && body2_cpl > 0) {
+    int byte_pos = 0, char_pos = 0;
+    while (char_pos < msg_len) {
+      sim_lines++;
+      int bi = byte_pos, sc = 0, last_sp = -1, last_sp_char = -1;
+      int last_nl = -1, last_nl_char = -1;
+      while (msg[bi] && sc < body2_cpl) {
+        if (msg[bi] == '\n') {
+          last_nl = bi;
+          last_nl_char = char_pos + sc;
+          break;
+        }
+        if (msg[bi] == ' ') { last_sp = bi; last_sp_char = char_pos + sc; }
+        if ((msg[bi] & 0xC0) != 0x80) sc++;
+        bi++;
+      }
+      if (last_nl >= 0) {
+        char_pos = last_nl_char + 1;
+        byte_pos = last_nl + 1;
+      } else if (msg_len - char_pos <= body2_cpl) {
+        break;
+      } else if (last_sp >= 0) {
+        char_pos = last_sp_char + 1;
+        byte_pos = last_sp + 1;
+      } else {
+        char_pos += sc;
+        byte_pos = bi;
+      }
+    }
+  }
+  return ((body2_lines >= 1) && (sim_lines <= body2_lines)) ? 2 : 1;
+}
 #define BOOT_SCREEN_MILLIS   3000   // 3 seconds
 
 #ifdef PIN_STATUS_LED
@@ -395,25 +441,7 @@ public:
       if (_task->peekTopMsg(info)) {
         int msg_start_y = hdr_line_h + 3;
 
-        int msg_len = (int)strlen(info.msg);
-
-        // Dynamic body font selection (same algorithm as MsgPreviewScreen)
-        int body2_lines = (display.height() - msg_start_y) / 16;
-        int body2_cpl   = display.width() / 12;
-        int sim_lines   = 0;
-        if (body2_lines >= 4) {
-          int pos = 0;
-          while (pos < msg_len) {
-            sim_lines++;
-            if (msg_len - pos <= body2_cpl) break;
-            int brk = pos + body2_cpl;
-            for (int j = pos + body2_cpl; j > pos; j--) {
-              if (info.msg[j] == ' ') { brk = j; break; }
-            }
-            pos = brk + (info.msg[brk] == ' ' ? 1 : 0);
-          }
-        }
-        int body_size = ((body2_lines >= 4) && (sim_lines <= body2_lines)) ? 2 : 1;
+        int body_size = calcDynamicBodySize(display, info.msg, msg_start_y);
 
         // Header: "#N (D)name" + time elapsed top-right
         char time_str[8];
@@ -1484,24 +1512,7 @@ public:
       int hdr_line_h = 8 * hdr_size;
       int msg_start_y = hdr_line_h + 3;
 
-      int msg_len = (int)strlen(p->msg);
-
-      int body2_lines = (display.height() - msg_start_y) / 16;
-      int body2_cpl   = display.width() / 12;
-      int sim_lines = 0;
-      if (body2_lines >= 4) {
-        int pos = 0;
-        while (pos < msg_len) {
-          sim_lines++;
-          if (msg_len - pos <= body2_cpl) break;
-          int brk = pos + body2_cpl;
-          for (int i = pos + body2_cpl; i > pos; i--) {
-            if (p->msg[i] == ' ') { brk = i; break; }
-          }
-          pos = brk + (p->msg[brk] == ' ' ? 1 : 0);
-        }
-      }
-      int body_size = ((body2_lines >= 4) && (sim_lines <= body2_lines)) ? 2 : 1;
+      int body_size = calcDynamicBodySize(display, p->msg, msg_start_y);
 
       char time_str[8];
       int secs = (int)(_rtc->getCurrentTime() - p->timestamp);
@@ -1551,26 +1562,7 @@ public:
     int hdr_line_h  = 8 * hdr_size;
     int msg_start_y = hdr_line_h + 3;
 
-    int msg_len = (int)strlen(p->msg);
-
-    int body2_lines = (display.height() - msg_start_y) / 16;
-    int body2_cpl   = display.width() / 12;
-    // Simulate word wrap at size 2 to get actual line count
-    int sim_lines = 0;
-    if (body2_lines >= 4) {
-      int pos = 0;
-      while (pos < msg_len) {
-        sim_lines++;
-        if (msg_len - pos <= body2_cpl) break;
-        int brk = pos + body2_cpl;
-        for (int i = pos + body2_cpl; i > pos; i--) {
-          if (p->msg[i] == ' ') { brk = i; break; }
-        }
-        pos = brk + (p->msg[brk] == ' ' ? 1 : 0);
-      }
-    }
-    bool use2     = (body2_lines >= 4) && (sim_lines <= body2_lines);
-    int body_size = use2 ? 2 : 1;
+    int body_size = calcDynamicBodySize(display, p->msg, msg_start_y);
 
     // 2. Time string
     char time_str[8];
