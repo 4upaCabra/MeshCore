@@ -908,6 +908,9 @@ public:
       // --- Large clock display ---
       _clock_pm_pending = 0;
       time_t now = (time_t)_rtc->getCurrentTime();
+      if (_node_prefs && _node_prefs->tz_offset != 0) {
+        now += (time_t)_node_prefs->tz_offset * 3600;
+      }
       struct tm timeinfo;
       localtime_r(&now, &timeinfo);
       char timeBuf[6];

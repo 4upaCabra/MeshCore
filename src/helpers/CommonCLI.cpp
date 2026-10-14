@@ -848,6 +848,15 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, char* command, char* rep
       _prefs->adc_multiplier = 0.0f;
       strcpy(reply, "Error: unsupported");
     };
+  } else if (memcmp(config, "tz.offset ", 10) == 0) {
+    int tz = atoi(&config[10]);
+    if (tz < -12 || tz > 14) {
+      strcpy(reply, "Error, must be from -12 to +14");
+    } else {
+      _prefs->tz_offset = (int8_t)tz;
+      savePrefs();
+      strcpy(reply, "OK");
+    }
   #if defined(USE_LR2021)
   } else if (memcmp(config, "extra.sf ", 9) == 0) {
     strcpy(tmp, &config[9]);
@@ -919,6 +928,8 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, char* command, char* rep
     sprintf(reply, "> %s", StrHelper::ftoa(_prefs->node_lat));
   } else if (memcmp(config, "lon", 3) == 0) {
     sprintf(reply, "> %s", StrHelper::ftoa(_prefs->node_lon));
+  } else if (memcmp(config, "tz.offset", 9) == 0) {
+    sprintf(reply, "> %d", (int)_prefs->tz_offset);
   } else if (memcmp(config, "radio.rxgain", 12) == 0) {
     sprintf(reply, "> %s", _prefs->rx_boosted_gain ? "on" : "off");
   } else if (memcmp(config, "radio.fem.rxgain", 16) == 0) {

@@ -4003,6 +4003,18 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
       strcpy(buf, "ERR: pin must be 0 (auto/random) or 100000-999999");
     }
 
+  } else if (strcmp(cmd, "get tz.offset") == 0) {
+    snprintf(buf, 512, "tz.offset: %d", (int)_prefs.tz_offset);
+  } else if (strncmp(cmd, "set tz.offset ", 14) == 0) {
+    int tz = atoi(cmd + 14);
+    if (tz < -12 || tz > 14) {
+      strcpy(buf, "Error, must be from -12 to +14");
+    } else {
+      _prefs.tz_offset = (int8_t)tz;
+      savePrefs();
+      strcpy(buf, "OK");
+    }
+
   } else if (strcmp(cmd, "timesync") == 0) {
     _ts.buildReply(buf, 512, getRTCClock());
     char flags[64];

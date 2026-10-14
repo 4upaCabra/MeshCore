@@ -123,6 +123,7 @@ public:
   uint8_t  ui_aeic_detect_off = 0;   // 0 = show/forward AEIC placeholders
   uint8_t  ui_mcoimg_detect_off = 0; // 0 = show/forward MCOimg placeholders
   uint8_t  framed_packets_enabled = 1; // 0 = never fragment long companion frames
+  int8_t   tz_offset = 0;
 
 private:
   class RadioPrefs : public ConfigSerializer {
@@ -237,6 +238,7 @@ private:
       def("tel_base", _parent->telemetry_mode_base);
       def("tel_loc", _parent->telemetry_mode_loc);
       def("tel_env", _parent->telemetry_mode_env);
+      def("tz_offset", _parent->tz_offset);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }
