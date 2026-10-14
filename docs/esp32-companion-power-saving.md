@@ -207,7 +207,7 @@ idf.py -DIDF_TARGET=esp32s3 -DSDKCONFIG_DEFAULTS=<штатный sdkconfig + н�
 
 ## Как собирать прошивку
 
-Ядро живёт в отдельном репозитории — https://github.com/rogovogor/arduino-esp32-ps
+Ядро живёт в отдельном репозитории — https://github.com/alohataiti/arduino-esp32-ps
 (рецепт, сборка, релизы). В прошивке:
 
 - `[esp32_base]` закрепляет **штатное** ядро точной версией
@@ -265,3 +265,4 @@ pio run -e Heltec_E290_companion_radio_ble_async_ps
 - Исходники форка: https://github.com/IoTThinks/MeshCore/tree/PowerSaving-v17
 - Сборщик библиотек: https://github.com/espressif/esp32-arduino-lib-builder
 - Управление питанием IDF 4.4.7: https://docs.espressif.com/projects/esp-idf/en/v4.4.7/esp32/api-reference/system/power_management.html
+

@@ -2,7 +2,7 @@
 """Install the ESP32 power-saving core next to the stock one.
 
 *_ps environments build against framework-arduinoespressif32 with CONFIG_PM_ENABLE
-(https://github.com/rogovogor/arduino-esp32-ps). PlatformIO keeps one package per
+(https://github.com/alohataiti/arduino-esp32-ps). PlatformIO keeps one package per
 name, so the PS core is not installed as a package: it is unpacked once into
 <core_dir>/ps/<name> and linked from [esp32_ps] in platformio.ini, while the
 normal environments stay pinned to the stock core.
@@ -27,7 +27,7 @@ from pathlib import Path
 
 PS_VERSION = "2.0.17-ps.1"
 PKG_VERSION = "3.20017.241212-ps.1"
-URL = ("https://github.com/rogovogor/arduino-esp32-ps/releases/download/"
+URL = ("https://github.com/alohataiti/arduino-esp32-ps/releases/download/"
        f"{PS_VERSION}/framework-arduinoespressif32-{PS_VERSION}.tar.gz")
 SHA256 = "73dc0e78d91d3199407c06b6e2df659a60b77de2898f4bcaf57703835a40f0d6"
 NAME = f"framework-arduinoespressif32-{PS_VERSION}"
@@ -107,3 +107,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
