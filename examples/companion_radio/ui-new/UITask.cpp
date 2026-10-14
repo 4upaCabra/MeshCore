@@ -218,6 +218,9 @@ class HomeScreen : public UIScreen {
 #if UI_SENSORS_PAGE == 1
     SENSORS,
 #endif
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+    DISCOVERY,
+#endif
     SETTINGS,
     SHUTDOWN,
     Count    // keep as last
@@ -231,6 +234,11 @@ class HomeScreen : public UIScreen {
   bool _shutdown_init;
   int _clock_pm_pending;   // PMs queued for inline display on CLOCK page
   AdvertPath recent[ADVERT_PATH_TABLE_SIZE];
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  DiscoveredNode discovered[UI_RECENT_LIST_SIZE];
+  uint32_t discovery_req_time = 0;
+  bool discovery_disp_names = true; // by default display names if available (removes SNR_O)
+#endif
 
   bool          _in_settings    = false;
   int           _settings_sel   = 0;
@@ -559,6 +567,9 @@ public:
       // --- Large clock display ---
       _clock_pm_pending = 0;
       time_t now = (time_t)_rtc->getCurrentTime();
+      if (_node_prefs && _node_prefs->tz_offset != 0) {
+        now += (time_t)_node_prefs->tz_offset * 3600;
+      }
       struct tm timeinfo;
       localtime_r(&now, &timeinfo);
       char timeBuf[6];
@@ -1134,6 +1145,39 @@ public:
           }
         }
       }
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+    } else if (_page == HomePage::DISCOVERY) {
+      int count = the_mesh.getDiscoveredNodes(discovered, UI_RECENT_LIST_SIZE);
+      display.setColor(UIColor::primary_txt);
+      display.setTextSize(hdr_size);
+      int y = content_y;
+      for (int i = 0; i < count; i++, y += line_h) {
+        char name[32];
+        auto a = &discovered[i];
+        if ((a->name[0] == 0) || !discovery_disp_names) {
+          mesh::Utils::toHex(name, a->pubkey_prefix, 4);
+        } else {
+          strncpy(name, a->name, 32);
+          name[31] = 0;
+        }
+        char snr_s[16];
+        if (strlen(name) <= 8) { // display snr_o
+          snprintf(snr_s, sizeof(snr_s), "%02.1f>%02.1f", a->snr_out, a->snr_in);
+        } else {
+          snprintf(snr_s, sizeof(snr_s), "%02.1f", a->snr_in);
+        }
+        int snr_width = display.getTextWidth(snr_s);
+        int max_name_width = display.width() - snr_width - 1;
+        display.drawTextEllipsized(0, y, max_name_width, name);
+        display.setCursor(display.width() - snr_width - 1, y);
+        display.print(snr_s);
+      }
+      if (millis() < discovery_req_time + 5000) {
+        return 1000; // more frequent updates just after req
+      } else if (count < UI_RECENT_LIST_SIZE - 1) { // show only 5 sec after last disc
+        display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, "discover: " PRESS_LABEL);
+      }
+#endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(UIColor::primary_txt);
       display.setTextSize(hdr_size);
@@ -1413,12 +1457,22 @@ public:
 #if UI_SENSORS_PAGE == 1
       if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
 #endif
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+      if (_page == HomePage::DISCOVERY) {
+        _task->showAlert("Repeater disc", 800);
+      }
+#endif
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
       _page = (_page + 1) % HomePage::Count;
 #if UI_SENSORS_PAGE == 1
       if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
+#endif
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+      if (_page == HomePage::DISCOVERY) {
+        _task->showAlert("Repeater disc", 800);
+      }
 #endif
       return true;
     }
@@ -1460,6 +1514,19 @@ public:
       _settings_scroll = 0;
       return true;
     }
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+    if (c == KEY_ENTER && _page == HomePage::DISCOVERY) {
+      if (millis() > discovery_req_time + 5000) { // rate limiter
+        the_mesh.requestRepeatersDiscovery();
+        discovery_req_time = millis();
+      }
+      return true;
+    }
+    if (c == KEY_SELECT && _page == HomePage::DISCOVERY) {
+      discovery_disp_names = !discovery_disp_names;
+      return true;
+    }
+#endif
     if (c == HIBERNATE_KEY && _page == HomePage::SHUTDOWN) {
       _shutdown_init = true;  // need to wait for button to be released
       return true;

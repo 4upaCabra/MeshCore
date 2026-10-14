@@ -140,6 +140,9 @@ static void normalizeCliCommand(char* buf);
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
+#define CTL_TYPE_NODE_DISCOVER_REQ      0x80
+#define CTL_TYPE_NODE_DISCOVER_RESP     0x90
+
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT                0x80
 #define PUSH_CODE_PATH_UPDATED          0x81
@@ -1253,6 +1256,55 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
   return max_num;
 }
 
+#if defined(DISPLAY_CLASS) && !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+int MyMesh::getDiscoveredNodes(DiscoveredNode nodes[], int max_num) {
+  if (max_num > DISCOVERED_NODES_TABLE_SIZE) max_num = DISCOVERED_NODES_TABLE_SIZE;
+  if (max_num > (int)disc_nodes_count) max_num = disc_nodes_count;
+
+  for (int i = 0; i < max_num; i++) {
+    nodes[i] = discovered_nodes[i];
+  }
+  return max_num;
+}
+
+bool MyMesh::requestRepeatersDiscovery() {
+  uint8_t cmd_bytes[6];
+  cmd_bytes[0] = CTL_TYPE_NODE_DISCOVER_REQ | 1; // DISCOVER_REQ | prefix only
+  cmd_bytes[1] = 0xFF;     // Repeaters
+  getRNG()->random(&cmd_bytes[2], 4); // tag
+  disc_nodes_count = 0;
+  disc_node_req_tag = *((uint32_t*)&cmd_bytes[2]);
+  mesh::Packet* req = createControlData(cmd_bytes, sizeof(cmd_bytes));
+  if (req) {
+    sendZeroHop(req);
+    return true;
+  }
+  return false;
+}
+
+void MyMesh::checkControlDataForPendingDiscovery(uint8_t payload[], size_t p_len) {
+  if ((p_len < 12)
+      || ((payload[0] & 0xF0) != CTL_TYPE_NODE_DISCOVER_RESP)
+      || (disc_nodes_count >= DISCOVERED_NODES_TABLE_SIZE)
+      || (memcmp(&payload[2], &disc_node_req_tag, 4))) {
+    return;
+  }
+  memcpy(&discovered_nodes[disc_nodes_count].pubkey_prefix, &payload[6], 8);
+  discovered_nodes[disc_nodes_count].pubkey_prefix[8] = 0;
+  discovered_nodes[disc_nodes_count].type = payload[0] & 0xF;
+  discovered_nodes[disc_nodes_count].snr_out = ((int8_t)payload[1]) / 4.0f;
+  discovered_nodes[disc_nodes_count].snr_in = _radio->getLastSNR();
+  ContactInfo* c = lookupContactByPubKey(&payload[6], 8);
+  if (c != NULL) {
+    strncpy(discovered_nodes[disc_nodes_count].name, c->name, 32);
+    discovered_nodes[disc_nodes_count].name[31] = 0;
+  } else {
+    discovered_nodes[disc_nodes_count].name[0] = 0;
+  }
+  disc_nodes_count++;
+}
+#endif
+
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   out_frame[0] = PUSH_CODE_PATH_UPDATED;
   memcpy(&out_frame[1], contact.id.pub_key, PUB_KEY_SIZE);
@@ -1828,6 +1880,9 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
+#if defined(DISPLAY_CLASS) && !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  checkControlDataForPendingDiscovery(packet->payload, packet->payload_len);
+#endif
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
   writePacketPayloadFrameMaybeFragmented(packet, PUSH_CODE_CONTROL_DATA, packet->path_len, "onControlDataRecv");
 #else
