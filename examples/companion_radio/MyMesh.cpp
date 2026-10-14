@@ -3,6 +3,7 @@
 #include "OfflineRoutePolicy.h"
 
 #include <Arduino.h> // needed for PlatformIO
+#include <ctype.h>
 #include <Mesh.h>
 #include <helpers/CompanionAppCapabilities.h>
 #include <helpers/TextMessageAck.h>
@@ -26,6 +27,8 @@
 #ifdef WITH_COMPANION_CLI
 #include <helpers/CliReplySplitter.h>
 #endif
+
+static void normalizeCliCommand(char* buf);
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -3340,6 +3343,7 @@ void MyMesh::checkCLIRescueCmd() {
 
   if (len > 0 && cli_command[len - 1] == '\r') {  // received complete line
     cli_command[len - 1] = 0;  // replace newline with C string null terminator
+    normalizeCliCommand(cli_command);
 
     if (memcmp(cli_command, "set ", 4) == 0) {
       const char* config = &cli_command[4];
@@ -3864,7 +3868,77 @@ int MyMesh::mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped
 #ifdef WITH_COMPANION_CLI
 
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
-  if (strcmp(cmd, "pin") == 0) {
+  if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
+    snprintf(buf, 512,
+      "Commands: help <topic>\n"
+      " radio - LoRa parameters\n"
+      " sys   - System, time, PIN, reboot\n"
+      " app   - Features & messaging\n"
+      " all   - Full command list\n"
+      "Quick: pin, ver, reboot, get radio");
+  } else if (strcmp(cmd, "help radio") == 0) {
+    snprintf(buf, 512,
+      "Radio parameters:\n"
+      "get/set radio [freq, bw, sf, cr, txpower]\n"
+      "get/set txdelay, rxdelay, airtime");
+  } else if (strcmp(cmd, "help sys") == 0) {
+    snprintf(buf, 512,
+      "System & Timesync:\n"
+      "pin - show CLI/BLE PIN; get/set ble.pin <0|PIN>\n"
+      "timesync [on|off|adverts on/off|msgs on/off|reset|params]\n"
+      "set timesync.<cluster|drift|jump|back|age|quiet> <s>\n"
+      "clock / time - RTC status\n"
+      "reboot / poweroff - restart / shut down\n"
+      "neighbors - heard node list\n"
+      "stats-core / stats-packets / stats-radio\n"
+      "log / tempradio / powersaving / clear stats\n"
+      "ver / board - firmware & hardware info");
+  } else if (strcmp(cmd, "help app") == 0) {
+    snprintf(buf, 512,
+      "App & Features:\n"
+      "get/set remote.cli|terminal.cli [on|off]\n"
+      "get/set cyr2lat.channels|cyr2lat.contacts [on|off]\n"
+#ifdef WITH_MCOTXT
+      "get/set mcotxt [on|off]\n"
+#endif
+#ifdef WITH_MCMP_DETECT
+      "get/set mcmp.detect [on|off]\n"
+#endif
+#ifdef WITH_AEIC_DETECT
+      "get/set aeic.detect [on|off]\n"
+#endif
+#ifdef WITH_MCOIMG_DETECT
+      "get/set mcoimg.detect [on|off]\n"
+#endif
+#ifdef WITH_WIFI_SWITCHING
+      "wifi list|scan|add|del|ip|port|connect|status\n"
+#endif
+    );
+  } else if (strcmp(cmd, "help all") == 0) {
+    snprintf(buf, 512,
+      "Full command list:\n"
+      "Radio: get/set radio, txdelay, rxdelay, airtime\n"
+      "Sys: pin, get/set ble.pin, timesync [on|off|params], clock, reboot, poweroff, neighbors, stats, ver, board\n"
+      "App: get/set remote.cli|terminal.cli|cyr2lat.channels|contacts"
+#ifdef WITH_MCOTXT
+      ", mcotxt"
+#endif
+#ifdef WITH_MCMP_DETECT
+      ", mcmp.detect"
+#endif
+#ifdef WITH_AEIC_DETECT
+      ", aeic.detect"
+#endif
+#ifdef WITH_MCOIMG_DETECT
+      ", mcoimg.detect"
+#endif
+#ifdef WITH_WIFI_SWITCHING
+      ", wifi"
+#endif
+    );
+  } else if (strncmp(cmd, "help ", 5) == 0) {
+    snprintf(buf, 512, "Unknown topic '%s'. Use: help [radio|sys|app|all]", cmd + 5);
+  } else if (strcmp(cmd, "pin") == 0) {
     if (_prefs.ble_pin == 0)
       snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu (auto, new random on reboot)", _cli_pin, (unsigned long)_active_ble_pin);
     else
@@ -4188,6 +4262,38 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   return true;
 }
 
+// Lower-case the command verb (and subcommand for multi-word prefixes like
+// get/set/clock/timesync/clear/wifi/help) while preserving the case of
+// any arguments that follow.
+static void normalizeCliCommand(char* buf) {
+  if (!buf || !*buf) return;
+  // skip leading spaces
+  char* p = buf;
+  while (*p == ' ') p++;
+  // lowercase the first word (command verb)
+  char* wordStart = p;
+  while (*p && *p != ' ') { *p = tolower((unsigned char)*p); p++; }
+  if (!*p) return;  // single-word command, done
+  // Check if the verb is one that takes a subcommand
+  size_t verbLen = p - wordStart;
+  static const char* const multiWordVerbs[] = {
+    "get", "set", "clock", "timesync", "clear", "wifi", "help"
+  };
+  bool hasSubCmd = false;
+  for (size_t i = 0; i < sizeof(multiWordVerbs) / sizeof(multiWordVerbs[0]); i++) {
+    if (verbLen == strlen(multiWordVerbs[i]) && memcmp(wordStart, multiWordVerbs[i], verbLen) == 0) {
+      hasSubCmd = true;
+      break;
+    }
+  }
+  if (!hasSubCmd) return;  // no subcommand to lowercase
+  // skip spaces between verb and subcommand
+  while (*p == ' ') p++;
+  // lowercase the subcommand (second word)
+  while (*p && *p != ' ') { *p = tolower((unsigned char)*p); p++; }
+  // everything after the subcommand keeps its original case
+}
+
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
   char from_hex[9];
   mesh::Utils::toHex(from_hex, from.id.pub_key, 4);
@@ -4199,6 +4305,7 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
   char* e = cmdBuf + strlen(cmdBuf);
   while (e > cmdBuf && (e[-1] == ' ' || e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
   cmd = cmdBuf;
+  normalizeCliCommand(cmdBuf);
 
   MESH_DEBUG_PRINTLN("CLI/PM from=%s cmd='%s'", from_hex, cmd);
 
@@ -4232,6 +4339,7 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   char* e = cmdBuf + strlen(cmdBuf);
   while (e > cmdBuf && (e[-1] == ' ' || e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
   cmd = cmdBuf;
+  normalizeCliCommand(cmdBuf);
 
   MESH_DEBUG_PRINTLN("CLI/Terminal ch=%u cmd='%s'", ch_idx, cmd);
 
