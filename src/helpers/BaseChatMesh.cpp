@@ -10,6 +10,8 @@
   #define TXT_ACK_DELAY     200
 #endif
 
+#define CLI_REPLY_DELAY_MILLIS      600
+
 void BaseChatMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
   sendFlood(pkt, delay_millis);
 }
@@ -264,13 +266,36 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
         sendAckTo(from, ack_hash, 6);
       }
     } else if (flags == TXT_TYPE_CLI_DATA) {
-      onCommandDataRecv(from, packet, timestamp, (const char *) &data[5]);  // let UI know
+      char *text = (char *)&data[5];
+      onCommandDataRecv(from, packet, timestamp, text);  // let UI know
       // NOTE: no ack expected for CLI_DATA replies
+    } else if (flags == TXT_TYPE_CLI_COMMAND) {
+      uint8_t temp[166];
+      char *command = (char *)&data[5];
+      char *reply = (char *)&temp[5];
+      *reply = 0;
 
-      if (packet->isRouteFlood()) {
-        // let this sender know path TO here, so they can use sendDirect() (NOTE: no ACK as extra)
-        mesh::Packet* path = createPathReturn(from.id, secret, packet->path, packet->path_len, 0, NULL, 0);
-        if (path) sendFloodScoped(from, path);
+      onCLICommandRecv(from, packet, timestamp, command, reply);  // let UI know
+      // NOTE: no ack expected for CLI_COMMAND replies
+
+      int text_len = strlen(reply);
+      if (text_len > 0) {
+        uint32_t reply_timestamp = getRTCClock()->getCurrentTimeUnique();
+        if (reply_timestamp == timestamp) {
+          // WORKAROUND: the two timestamps need to be different, in the CLI view
+          reply_timestamp++;
+        }
+        memcpy(temp, &reply_timestamp, 4);
+        temp[4] = (TXT_TYPE_CLI_DATA << 2);
+
+        auto reply_pkt = createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, secret, temp, 5 + text_len);
+        if (reply_pkt) {
+          if (from.out_path_len == OUT_PATH_UNKNOWN) {
+            sendFloodScoped(from, reply_pkt, CLI_REPLY_DELAY_MILLIS);
+          } else {
+            sendDirect(reply_pkt, from.out_path, from.out_path_len, CLI_REPLY_DELAY_MILLIS);
+          }
+        }
       }
     } else if (flags == TXT_TYPE_SIGNED_PLAIN) {
       if (timestamp > from.sync_since) {  // make sure 'sync_since' is up-to-date
@@ -470,13 +495,13 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
   return rc;
 }
 
-int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& est_timeout) {
+int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, uint8_t txt_type, const char* text, uint32_t& est_timeout) {
   int text_len = strlen(text);
   if (text_len > MAX_TEXT_LEN) return MSG_SEND_FAILED;
 
   uint8_t temp[5+MAX_TEXT_LEN+1];
   memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-  temp[4] = (attempt & 3) | (TXT_TYPE_CLI_DATA << 2);
+  temp[4] = (attempt & 3) | (txt_type << 2);
   memcpy(&temp[5], text, text_len + 1);
 
   auto pkt = createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.getSharedSecret(self_id), temp, 5 + text_len);

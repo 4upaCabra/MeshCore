@@ -1433,6 +1433,38 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 }
 
+void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
+                              const char *text, char* reply) {
+  markConnectionActive(from); // in case this is from a server, and we have a connection
+#ifdef WITH_COMPANION_CLI
+  if (from.isRemoteCLIAllowed()) {
+    static char cmdBuf[256];
+    strncpy(cmdBuf, text, sizeof(cmdBuf) - 1);
+    cmdBuf[sizeof(cmdBuf) - 1] = '\0';
+    char* e = cmdBuf + strlen(cmdBuf);
+    while (e > cmdBuf && (e[-1] == ' ' || e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
+    normalizeCliCommand(cmdBuf);
+
+    if (strcmp(cmdBuf, "reboot") == 0) {
+      strcpy(reply, "rebooting in 1s...");
+      _pending_reboot_at = futureMillis(1000);
+      _pending_reboot_deadline = futureMillis(30000);
+      _app_drain_until = 0;
+    } else if (strcmp(cmdBuf, "poweroff") == 0 || strcmp(cmdBuf, "shutdown") == 0) {
+      strcpy(reply, "powering off...");
+      _pending_poweroff_at = futureMillis(500);
+      _pending_poweroff_deadline = futureMillis(30000);
+      _app_drain_until = 0;
+    } else if (!handleCliCmd(sender_timestamp, cmdBuf, reply, true)) {
+      if (_cli) _cli->handleCommand(sender_timestamp, cmdBuf, reply);
+      else strcpy(reply, "Unknown command");
+    }
+    return;
+  }
+#endif
+  queueMessage(from, TXT_TYPE_CLI_COMMAND, pkt, sender_timestamp, NULL, 0, text);
+}
+
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
   if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime(),
@@ -2278,7 +2310,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key_prefix = &cmd_frame[i];
     i += 6;
     ContactInfo *recipient = lookupContactByPubKey(pub_key_prefix, 6);
-    if (recipient && (txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_CLI_DATA)) {
+    if (recipient && (txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_CLI_DATA || txt_type == TXT_TYPE_CLI_COMMAND)) {
       char *text = (char *)&cmd_frame[i];
       int tlen = len - i;
       uint32_t est_timeout;
@@ -2286,9 +2318,9 @@ void MyMesh::handleCmdFrame(size_t len) {
       int result;
       uint32_t expected_ack;
       uint32_t app_ack = 0;
-      if (txt_type == TXT_TYPE_CLI_DATA) {
+      if (txt_type == TXT_TYPE_CLI_DATA || txt_type == TXT_TYPE_CLI_COMMAND) {
         msg_timestamp = getRTCClock()->getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
-        result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout);
+        result = sendCommandData(*recipient, msg_timestamp, attempt, txt_type, text, est_timeout);
         expected_ack = 0; // no Ack expected
       } else {
         const char* send_text = text;
