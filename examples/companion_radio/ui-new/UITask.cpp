@@ -525,17 +525,6 @@ public:
       display.setTextSize(1);
       display.drawTextRightAlign(display.width() - 32, 0, note_buf);
       display.setTextSize(hdr_size);
-    } else if (_page == HomePage::CLOCK && _task->isEinkDisplay()) {
-      // on eink clock page: time sync source right-aligned next to battery
-      char srcBuf[40];
-      snprintf(srcBuf, sizeof(srcBuf), "%s", the_mesh.getTimeSourceLabel());
-      if (the_mesh.getTimeSyncCount() > 0 && the_mesh.getTimeSource() == MyMesh::TIME_SOURCE_ADVERT) {
-        snprintf(srcBuf, sizeof(srcBuf), "%s %+lds",
-                 the_mesh.getTimeSourceLabel(), (long)the_mesh.getTimeLastAdjustment());
-      }
-      display.setTextSize(1);
-      display.drawTextRightAlign(display.width() - 32, 0, srcBuf);
-      display.setTextSize(hdr_size);
     }
 
     // battery voltage
@@ -584,7 +573,7 @@ public:
 #else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
 #endif
-        // source shown in header; date uses hdr_size for readability on wide displays
+        // date uses hdr_size for readability on wide displays; source shown at bottom
         int date_sz = hdr_size;
         int clock_sz = min(display.width() / 30, (display.height() - 22) / 8);
         if (clock_sz < 1) clock_sz = 1;
@@ -595,6 +584,8 @@ public:
         display.drawDigitsCentered(display.width() / 2, clock_y, timeBuf);
         display.setTextSize(date_sz);
         display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, display.height() - 8, sourceBuf);
       } else if (_task->isColorTFTDisplay()) {
         char dateBuf[32];
 #ifdef CYRILLIC_SUPPORT
