@@ -107,13 +107,25 @@ static int calcDynamicBodySize(DisplayDriver& display, const char* msg, int msg_
   #define PRESS_LABEL "press Enter"
   // On joystick boards a short SELECT click = KEY_ENTER; hibernation must require
   // a deliberate press-and-hold, which the SELECT long press maps to (KEY_CANCEL).
-  #define HIBERNATE_KEY   KEY_CANCEL
-  #define HIBERNATE_LABEL "hold Select"
+  #define HIBERNATE_KEY      KEY_CANCEL
+  #define HIBERNATE_LABEL    "hold Select"
+  #define UI_PRESS_LABEL     _TR("press Enter", "нажмите Enter")
+  #define UI_HIBERNATE_LABEL _TR("hold Select", "удерживайте Select")
+  #define UI_ENTER_HINT      _TR("press Enter to enter", "нажмите для входа")
+  #define UI_TOGGLE_HINT     _TR("toggle: press Enter", "перекл: Enter")
+  #define UI_ADVERT_HINT     _TR("advert: press Enter", "маяк: Enter")
+  #define UI_DISCOVER_HINT   _TR("discover: press Enter", "поиск: Enter")
 #else
   #define PRESS_LABEL "long press"
   // Single-button boards already map the long press to KEY_ENTER.
-  #define HIBERNATE_KEY   KEY_ENTER
-  #define HIBERNATE_LABEL "long press"
+  #define HIBERNATE_KEY      KEY_ENTER
+  #define HIBERNATE_LABEL    "long press"
+  #define UI_PRESS_LABEL     _TR("long press", "удержание")
+  #define UI_HIBERNATE_LABEL _TR("long press", "удержание")
+  #define UI_ENTER_HINT      _TR("long press to enter", "удержание для входа")
+  #define UI_TOGGLE_HINT     _TR("toggle: long press", "перекл: удержание")
+  #define UI_ADVERT_HINT     _TR("advert: long press", "маяк: удержание")
+  #define UI_DISCOVER_HINT   _TR("discover: long press", "поиск: удержание")
 #endif
 
 #include "icons.h"
@@ -1037,13 +1049,13 @@ public:
           _task->isBluetoothEnabled() ? bluetooth_on : bluetooth_off,
           32, 32);
       display.setTextSize(hdr_size);
-      display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, UI_TOGGLE_HINT);
 #endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(UIColor::primary_txt);
       display.drawXbm((display.width() - 32) / 2, content_y, advert_icon, 32, 32);
       display.setTextSize(hdr_size);
-      display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, "advert: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, UI_ADVERT_HINT);
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
       LocationProvider* nmea = sensors.getLocationProvider();
@@ -1297,7 +1309,7 @@ public:
       if (!_in_settings) {
         display.setColor(UIColor::primary_txt);
         display.drawTextCentered(display.width() / 2, content_y + 8, _TR("Settings", "Настройки"));
-        display.drawTextCentered(display.width() / 2, content_y + 24, _TR(PRESS_LABEL " to enter", PRESS_LABEL " - войти"));
+        display.drawTextCentered(display.width() / 2, content_y + 24, UI_ENTER_HINT);
         // Firmware version with the commit hash, e.g. "v1.17.1-6cf6277b" — the boot
         // splash is gone in 3 s, and this is where to check what is flashed. On a
         // 64-px OLED there is no room at content_y + 40: it takes the bottom line.
@@ -1358,33 +1370,33 @@ public:
       if (millis() < discovery_req_time + 5000) {
         return 1000; // more frequent updates just after req
       } else if (count < UI_RECENT_LIST_SIZE - 1) { // show only 5 sec after last disc
-        display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, "discover: " PRESS_LABEL);
+        display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, UI_DISCOVER_HINT);
       }
 #endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(UIColor::primary_txt);
       display.setTextSize(hdr_size);
       if (_shutdown_init) {
-        display.drawTextCentered(display.width() / 2, content_y + 16, "hibernating...");
+        display.drawTextCentered(display.width() / 2, content_y + 16, _TR("hibernating...", "выключение..."));
       } else {
         const int line_h = display.getLineH(hdr_size);
         if (display.height() - content_y >= 32 + 2 * line_h) {
           display.drawXbm((display.width() - 32) / 2, content_y, power_icon, 32, 32);
-          display.drawTextCentered(display.width() / 2, display.height() - line_h * 2, "hibernate:");
-          display.drawTextCentered(display.width() / 2, display.height() - line_h + 1, HIBERNATE_LABEL);
+          display.drawTextCentered(display.width() / 2, display.height() - line_h * 2, _TR("hibernate:", "выключить:"));
+          display.drawTextCentered(display.width() / 2, display.height() - line_h + 1, UI_HIBERNATE_LABEL);
         } else {
           // A small screen (64-px OLED) has no room for the label under the icon:
           // it goes to the right of it, both centred together.
-          int text_w = display.getTextWidth("hibernate:");
-          const int label_w = display.getTextWidth(HIBERNATE_LABEL);
+          int text_w = display.getTextWidth(_TR("hibernate:", "выключить:"));
+          const int label_w = display.getTextWidth(UI_HIBERNATE_LABEL);
           if (label_w > text_w) text_w = label_w;
           const int x = (display.width() - (32 + 6 + text_w)) / 2;
           const int y = content_y + (display.height() - content_y - 32) / 2;
           display.drawXbm(x, y, power_icon, 32, 32);
           display.setCursor(x + 32 + 6, y + 16 - line_h + 1);
-          display.print("hibernate:");
+          display.print(_TR("hibernate:", "выключить:"));
           display.setCursor(x + 32 + 6, y + 16 + 1);
-          display.print(HIBERNATE_LABEL);
+          display.print(UI_HIBERNATE_LABEL);
         }
       }
     }
