@@ -55,6 +55,9 @@
 #define REQ_TYPE_GET_AVG_MIN_MAX     0x04
 #define REQ_TYPE_GET_ACCESS_LIST     0x05
 
+#define REQ_TYPE_SUBSCRIBE           0x08
+#define REQ_TYPE_UNSUBSCRIBE         0x09
+
 #define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
 
 #define CLI_REPLY_DELAY_MILLIS  1000
@@ -170,7 +173,60 @@ static uint8_t putFloat(uint8_t * dest, float value, uint8_t size, uint32_t mult
   return size;
 }
 
-uint8_t SensorMesh::handleRequest(uint8_t perms, uint32_t sender_timestamp, uint8_t req_type, uint8_t* payload, size_t payload_len) {
+static float findTelemValue(const uint8_t* buf, uint8_t size, uint8_t channel, uint8_t type, float def_value) {
+  uint8_t i = 0;
+  while (i + 2 < size) {
+    uint8_t ch = buf[i++];
+    uint8_t t = buf[i++];
+    uint8_t sz = getDataSize(t);
+    if (ch == channel && t == type) {
+      return getFloat(&buf[i], sz, getMultiplier(t), isSigned(t));
+    }
+    i += sz;
+  }
+  return def_value;
+}
+
+bool SensorMesh::telemHasChanged(ClientInfo* c) {
+  auto buf = telemetry.getBuffer();
+  uint8_t size = telemetry.getSize();
+  uint8_t i = 0;
+  bool changed = false;
+
+  while (i + 2 < c->extra.sensor.min_deltas_len) {
+    uint8_t ch = c->extra.sensor.min_deltas[i];
+    uint8_t t = c->extra.sensor.min_deltas[i + 1];
+    uint8_t sz = getDataSize(t);
+
+    float min_delta = getFloat(&c->extra.sensor.min_deltas[i + 2], sz, getMultiplier(t), isSigned(t));
+    float pv = getFloat(&c->extra.sensor.prev_telem[i + 2], sz, getMultiplier(t), isSigned(t));
+
+    float v = findTelemValue(buf, size, ch, t, 0.0f);
+    if (abs(v - pv) > min_delta) changed = true;
+
+    i += 2 + sz;
+  }
+  if (changed) {
+    i = 0;
+    while (i + 2 < c->extra.sensor.min_deltas_len) {
+      uint8_t ch = c->extra.sensor.min_deltas[i];
+      uint8_t t = c->extra.sensor.min_deltas[i + 1];
+      uint8_t sz = getDataSize(t);
+
+      c->extra.sensor.prev_telem[i] = ch;
+      c->extra.sensor.prev_telem[i + 1] = t;
+
+      float v = findTelemValue(buf, size, ch, t, 0.0f);
+      putFloat(&c->extra.sensor.prev_telem[i + 2], v, sz, getMultiplier(t), isSigned(t));
+
+      i += 2 + sz;
+    }
+  }
+  return changed;
+}
+
+uint8_t SensorMesh::handleRequest(ClientInfo* from, uint32_t sender_timestamp, uint8_t req_type, uint8_t* payload, size_t payload_len) {
+  uint8_t perms = from->isAdmin() ? 0xFF : from->permissions;
   memcpy(reply_data, &sender_timestamp, 4);   // reflect sender_timestamp back in response packet (kind of like a 'tag')
 
   if (req_type == REQ_TYPE_GET_TELEMETRY_DATA) {  // allow all
@@ -181,6 +237,10 @@ uint8_t SensorMesh::handleRequest(uint8_t perms, uint32_t sender_timestamp, uint
     // query other sensors -- target specific
     sensors.querySensors(0xFF & perm_mask, telemetry);  // allow all telemetry permissions for admin or guest
     // TODO: let requester know permissions they have:  telemetry.addPresence(TELEM_CHANNEL_SELF, perms);
+    float temperature = board.getMCUTemperature();
+    if (!isnan(temperature)) {   // Supported boards with built-in temperature sensor. ESP32-C3 may return NAN
+      telemetry.addTemperature(TELEM_CHANNEL_SELF, temperature);    // Built-in MCU Temperature
+    }
 
     uint8_t tlen = telemetry.getSize();
     memcpy(&reply_data[4], telemetry.getBuffer(), tlen);
@@ -233,6 +293,39 @@ uint8_t SensorMesh::handleRequest(uint8_t perms, uint32_t sender_timestamp, uint
       }
       return ofs;
     }
+  }
+  if (req_type == REQ_TYPE_SUBSCRIBE && payload_len >= 8 && (perms & PERM_ACL_ROLE_MASK) >= PERM_ACL_READ_ONLY) {
+    memcpy(&from->extra.sensor.push_tag, &payload[0], 4);
+    uint16_t timeout_secs;
+    memcpy(&timeout_secs, &payload[4], 2);
+    uint8_t  min_deltas_len = payload[7];
+    RegionEntry* r = region_map.getDefaultRegion();
+    uint8_t reply_len;
+    if (r && min_deltas_len >= 3 && min_deltas_len <= sizeof(from->extra.sensor.min_deltas)) {
+      from->extra.sensor.scope_region_id = r->id;
+      from->extra.sensor.expiry_timestamp = getRTCClock()->getCurrentTime() + timeout_secs;
+      from->extra.sensor.min_deltas_len = min_deltas_len;
+      memcpy(from->extra.sensor.min_deltas, &payload[8], min_deltas_len);
+      // reply with actual expiry seconds (we could modify/impose restriction)
+      memcpy(&reply_data[4], &timeout_secs, 2);
+      memset(&reply_data[6], 0, 2);  // reserved
+      strcpy((char *)&reply_data[8], r ? r->name : "");  // reply with name of scope that will be used
+      reply_len = 8 + strlen((char *)&reply_data[8]);
+    } else {
+      memset(&reply_data[4], 0, 4);  // expiry secs (0 for error)
+      reply_len = 8;
+    }
+    return reply_len;
+  }
+  if (req_type == REQ_TYPE_UNSUBSCRIBE && (perms & PERM_ACL_ROLE_MASK) >= PERM_ACL_READ_ONLY) {
+    from->extra.sensor.scope_region_id = 0;
+    from->extra.sensor.push_tag = 0;
+    from->extra.sensor.expiry_timestamp = 0;
+    from->extra.sensor.min_deltas_len = 0;
+    // REVISIT: maybe return some stats, eg total number of telemetry pushes since SUBSCRIBE?
+    memset(&reply_data[4], 0, 8);  // success
+    getRNG()->random(&reply_data[12], 2);   // just some entropy for better packet-hash uniqueness
+    return 12 + 2;
   }
   return 0;  // unknown command
 }
@@ -379,7 +472,7 @@ uint8_t SensorMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* 
   return 13;  // reply length
 }
 
-void SensorMesh::handleCommand(uint32_t sender_timestamp, char* command, char* reply) {
+void SensorMesh::handleCommand(ClientInfo* from, uint32_t sender_timestamp, char* command, char* reply) {
   while (*command == ' ') command++;   // skip leading spaces
 
   if (strlen(command) > 4 && command[2] == '|') {  // optional prefix (for companion radio CLI)
@@ -534,7 +627,7 @@ void SensorMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_i
     memcpy(&timestamp, data, 4);
 
     if (timestamp > from->last_timestamp) {  // prevent replay attacks
-      uint8_t reply_len = handleRequest(from->isAdmin() ? 0xFF : from->permissions, timestamp, data[4], &data[5], len - 5);
+      uint8_t reply_len = handleRequest(from, timestamp, data[4], &data[5], len - 5);
       if (reply_len == 0) return;  // invalid command
 
       from->last_timestamp = timestamp;
@@ -589,7 +682,7 @@ void SensorMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_i
         uint8_t temp[166];
         char *command = (char *) &data[5];
         char *reply = (char *) &temp[5];
-        handleCommand(sender_timestamp, command, reply);
+        handleCommand(from, sender_timestamp, command, reply);
 
         int text_len = strlen(reply);
         if (text_len > 0) {
@@ -869,23 +962,7 @@ void SensorMesh::formatPacketStatsReply(char *reply) {
 }
 
 float SensorMesh::getTelemValue(uint8_t channel, uint8_t type) {
-  auto buf = telemetry.getBuffer();
-  uint8_t size = telemetry.getSize();
-  uint8_t i = 0;
-
-  while (i + 2 < size) {
-    // Get channel #
-    uint8_t ch = buf[i++];
-    // Get data type
-    uint8_t t = buf[i++];
-    uint8_t sz = getDataSize(t);
-
-    if (ch == channel && t == type) {
-      return getFloat(&buf[i], sz, getMultiplier(t), isSigned(t));
-    }
-    i += sz;  // skip
-  }
-  return 0.0f;   // not found
+  return findTelemValue(telemetry.getBuffer(), telemetry.getSize(), channel, type, 0.0f);
 }
 
 bool  SensorMesh::getGPS(uint8_t channel, float& lat, float& lon, float& alt) {
@@ -934,6 +1011,39 @@ void SensorMesh::loop() {
     telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
     // query other sensors -- target specific
     sensors.querySensors(0xFF, telemetry);  // allow all telemetry permissions
+    // This MCU temperature will be overridden by external sensors (if any)
+    float temperature = board.getMCUTemperature();
+    if (!isnan(temperature)) {   // Supported boards with built-in temperature sensor. ESP32-C3 may return NAN
+      telemetry.addTemperature(TELEM_CHANNEL_SELF, temperature);    // Built-in MCU Temperature
+    }
+
+    // compare with previous telemetry, check if any deltas are greater than subscriber minimums
+    for (int i = 0; i < acl.getNumClients(); i++) {
+      auto c = acl.getClientByIdx(i);
+      if (c->permissions == 0 || c->extra.sensor.scope_region_id == 0 || c->extra.sensor.min_deltas_len == 0) continue;  // skip deleted entries, or Not subscribed to deltas
+      RegionEntry* r = region_map.findById(c->extra.sensor.scope_region_id);
+      if (r == NULL) continue;   // unknown region scope
+      if (curr > c->extra.sensor.expiry_timestamp) continue;  // subscription now expired
+      if (telemHasChanged(c)) {
+        TransportKey scope;
+        if (region_map.getTransportKeysFor(*r, &scope, 1) > 0) {
+          uint8_t tlen = telemetry.getSize();
+          memcpy(reply_data, &c->extra.sensor.push_tag, 4);
+          uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+          memcpy(&reply_data[4], &timestamp, 4);
+          memcpy(&reply_data[8], telemetry.getBuffer(), tlen);
+
+          mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, c->id, c->shared_secret, reply_data, 8 + tlen);
+          if (reply) {
+            if (c->out_path_len != OUT_PATH_UNKNOWN) {  // we have an out_path, so send DIRECT
+              sendDirect(reply, c->out_path, c->out_path_len, 0);
+            } else {
+              sendFlood(reply, 0, _prefs.path_hash_mode + 1);
+            }
+          }
+        }
+      }
+    }
 
     onSensorDataRead();
 
