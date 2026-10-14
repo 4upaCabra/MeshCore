@@ -5,6 +5,7 @@
 #include "../MyMesh.h"
 #include "../AdcCalibration.h"
 #include "../PowerScreens.h"
+#include "../UILang.h"
 #include "target.h"
 #include <time.h>
 #if defined(WIFI_SSID) || defined(WITH_WIFI_SWITCHING)
@@ -251,54 +252,16 @@ class HomeScreen : public UIScreen {
   bool           _in_adccal = false;
   AdcCalibration _adccal;
 
-#if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N               = 19;
-  static const int SETTINGS_COMMS_IDX       = 3;
-  static const int SETTINGS_PM_IDX          = 4;
-  static const int SETTINGS_DIM_IDX         = 5;
-  static const int SETTINGS_HOLD_IDX        = 6;
-  static const int SETTINGS_C2L_CH_IDX      = 7;
-  static const int SETTINGS_C2L_DM_IDX      = 8;
-  static const int SETTINGS_MCOTXT_IDX      = 9;
-  static const int SETTINGS_MCMP_IDX        = 10;
-  static const int SETTINGS_AEIC_IDX        = 11;
-  static const int SETTINGS_MCOIMG_IDX      = 12;
-  static const int SETTINGS_ROT_IDX         = 13;
-  static const int SETTINGS_UNREAD_IDX      = 14;
-  static const int SETTINGS_LOG_IDX         = 15;
-  static const int SETTINGS_ADC_IDX         = 16;
-  static const int SETTINGS_POWER_IDX       = 17;
-#elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N               = 18;
-  static const int SETTINGS_PM_IDX          = 3;
-  static const int SETTINGS_DIM_IDX         = 4;
-  static const int SETTINGS_HOLD_IDX        = 5;
-  static const int SETTINGS_C2L_CH_IDX      = 6;
-  static const int SETTINGS_C2L_DM_IDX      = 7;
-  static const int SETTINGS_MCOTXT_IDX      = 8;
-  static const int SETTINGS_MCMP_IDX        = 9;
-  static const int SETTINGS_AEIC_IDX        = 10;
-  static const int SETTINGS_MCOIMG_IDX      = 11;
-  static const int SETTINGS_ROT_IDX         = 12;
-  static const int SETTINGS_UNREAD_IDX      = 13;
-  static const int SETTINGS_LOG_IDX         = 14;
-  static const int SETTINGS_ADC_IDX         = 15;
-  static const int SETTINGS_POWER_IDX       = 16;
-#else
-  static const int SETTINGS_N               = 13;
-  static const int SETTINGS_PM_IDX          = 0;
-  static const int SETTINGS_DIM_IDX         = 1;
-  static const int SETTINGS_HOLD_IDX        = 2;
-  static const int SETTINGS_MCOTXT_IDX      = 3;
-  static const int SETTINGS_MCMP_IDX        = 4;
-  static const int SETTINGS_AEIC_IDX        = 5;
-  static const int SETTINGS_MCOIMG_IDX      = 6;
-  static const int SETTINGS_ROT_IDX         = 7;
-  static const int SETTINGS_UNREAD_IDX      = 8;
-  static const int SETTINGS_LOG_IDX         = 9;
-  static const int SETTINGS_ADC_IDX         = 10;
-  static const int SETTINGS_POWER_IDX       = 11;
-#endif
+  enum class SettingsPage : uint8_t {
+    ROOT,
+    CHAT,
+    DISP,
+    COMMS,
+    SYSTEM,
+    CODECS
+  };
+  SettingsPage _settings_page = SettingsPage::ROOT;
+
 
 #ifdef WITH_WIFI_SWITCHING
   bool _in_wifi_select  = false;
@@ -408,33 +371,363 @@ public:
 #endif
   }
 
-  int totalSettings() const {
-    const UIExtraSetting* extra = nullptr;
-    return SETTINGS_N - 1 + uiExtraSettings(&extra) + 1;
+  int settingsPageItemCount(SettingsPage page) const {
+    switch (page) {
+      case SettingsPage::ROOT:    return 5;
+      case SettingsPage::CHAT:    return 6;
+      case SettingsPage::DISP: {
+        const UIExtraSetting* extra = nullptr;
+        return 4 + uiExtraSettings(&extra);
+      }
+      case SettingsPage::COMMS:   return 4;
+      case SettingsPage::SYSTEM:  return 4;
+      case SettingsPage::CODECS:  return 5;
+    }
+    return 0;
   }
 
-  // Settings items hidden for the current hardware (skipped in render + nav).
-  bool isSettingHidden(int i) const {
+  bool isSettingHidden(SettingsPage page, int i) const {
     DisplayDriver* d = _task->getDisplay();
+    if (page == SettingsPage::ROOT) {
+#if !defined(WITH_WIFI_SWITCHING) && !defined(WITH_COMPANION_CLI)
+      if (i == 2) return true;
+#endif
+    } else if (page == SettingsPage::CHAT) {
+#ifndef WITH_COMPANION_CLI
+      if (i == 3 || i == 4) return true;
+#endif
+    } else if (page == SettingsPage::DISP) {
+#ifndef CYRILLIC_SUPPORT
+      if (i == 1) return true;
+#endif
 #if AUTO_OFF_MILLIS == 0
-    if (i == SETTINGS_DIM_IDX) return true;
+      if (i == 2) return true;
 #endif
-    if (i == SETTINGS_ROT_IDX) return !(d && d->isEink());
-    if (i == SETTINGS_ADC_IDX) return !AdcCalibration::supported(board);
-#if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING))
-    if (i == SETTINGS_POWER_IDX) return true;
-#endif
-    const UIExtraSetting* extra = nullptr;
-    int n_extra = uiExtraSettings(&extra);
-    if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
-      int k = i - (SETTINGS_N - 1);
-      if (extra && extra[k].visible && d) {
-        return !extra[k].visible(*d);
+      if (i == 3) return !(d && d->isEink());
+      if (i >= 4) {
+        int k = i - 4;
+        const UIExtraSetting* extra = nullptr;
+        int n_extra = uiExtraSettings(&extra);
+        if (k >= 0 && k < n_extra && extra && extra[k].visible && d) {
+          return !extra[k].visible(*d);
+        }
       }
-      return false;
+    } else if (page == SettingsPage::COMMS) {
+#ifndef WITH_WIFI_SWITCHING
+      if (i == 1) return true;
+#endif
+#ifndef WITH_COMPANION_CLI
+      if (i == 2 || i == 3) return true;
+#endif
+    } else if (page == SettingsPage::SYSTEM) {
+      if (i == 1) {
+#if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING))
+        return true;
+#endif
+      }
+      if (i == 2) return !AdcCalibration::supported(board);
     }
     return false;
   }
+
+  const char* getSettingLabel(SettingsPage page, int i) const {
+    if (page == SettingsPage::ROOT) {
+      if (i == 0) return _TR("[ Chat ]", "[ Сообщения ]");
+      if (i == 1) return _TR("[ Display ]", "[ Экран ]");
+      if (i == 2) return _TR("[ Connection ]", "[ Связь ]");
+      if (i == 3) return _TR("[ System ]", "[ Система ]");
+      if (i == 4) return _TR("[ Exit ]", "[ Выход ]");
+    } else if (i == 0) {
+      return _TR("< Back", "< Назад");
+    }
+
+    if (page == SettingsPage::CHAT) {
+      if (i == 1) return _TR("Popups", "Уведомл.");
+      if (i == 2) return _TR("Show Time", "Время показа");
+      if (i == 3) return _TR("Translit", "Транслит");
+      if (i == 4) return _TR("Serial Chat", "Чат в порт");
+      if (i == 5) return _TR("History", "История");
+    } else if (page == SettingsPage::DISP) {
+      if (i == 1) return _TR("Language", "Язык");
+      if (i == 2) return _TR("Always On", "Часы всегда");
+      if (i == 3) return _TR("Rotation", "Поворот");
+      if (i >= 4) {
+        int k = i - 4;
+        const UIExtraSetting* extra = nullptr;
+        int n_extra = uiExtraSettings(&extra);
+        if (k >= 0 && k < n_extra && extra && extra[k].label) {
+          return extra[k].label;
+        }
+      }
+    } else if (page == SettingsPage::COMMS) {
+      if (i == 1) return _TR("Interface", "Интерфейс");
+      if (i == 2) return _TR("Admin PIN", "PIN админа");
+      if (i == 3) return _TR("Timesync", "Синхр. врем.");
+    } else if (page == SettingsPage::SYSTEM) {
+      if (i == 1) return _TR("Power Mode", "Энергосбер.");
+      if (i == 2) return _TR("Batt Cal", "Калибр. АКБ");
+      if (i == 3) return _TR("Codecs >", "Кодеки >");
+    } else if (page == SettingsPage::CODECS) {
+      if (i == 1) return "MCOtxt";
+      if (i == 2) return "MCMP";
+      if (i == 3) return "AEIC";
+      if (i == 4) return "MCOimg";
+    }
+    return "";
+  }
+
+  bool getSettingValue(SettingsPage page, int i, char* val, size_t val_len) const {
+    if (page == SettingsPage::ROOT || i == 0) return false;
+
+    if (page == SettingsPage::CHAT) {
+      if (i == 1) {
+        snprintf(val, val_len, "%s", _pm_clock_mode ? _TR("PM only", "Только ЛС") : _TR("All", "Все"));
+      } else if (i == 2 && _node_prefs) {
+        static const char* h_en[4] = { "Off", "5s", "15s", "30s" };
+        static const char* h_ru[4] = { "Выкл", "5с", "15с", "30с" };
+        int idx = constrain(_node_prefs->ui_msg_hold, 0, 3);
+        snprintf(val, val_len, "%s", uiIsLangRu() ? h_ru[idx] : h_en[idx]);
+      } else if (i == 3) {
+#ifdef WITH_COMPANION_CLI
+        bool ch = the_mesh.isCyr2LatChannelsEnabled();
+        bool dm = the_mesh.isCyr2LatContactsEnabled();
+        int state = (ch ? 1 : 0) | (dm ? 2 : 0);
+        static const char* t_en[4] = { "Off", "Chan", "DM", "All" };
+        static const char* t_ru[4] = { "Выкл", "Канал", "ЛС", "Все" };
+        snprintf(val, val_len, "%s", uiIsLangRu() ? t_ru[state] : t_en[state]);
+#endif
+      } else if (i == 4) {
+#ifdef WITH_COMPANION_CLI
+        static const char* sc_en[4] = { "All", "Chan", "PM", "Off" };
+        static const char* sc_ru[4] = { "Все", "Канал", "ЛС", "Выкл" };
+        int m = constrain(the_mesh.getChatMode(), 0, 3);
+        snprintf(val, val_len, "%s", uiIsLangRu() ? sc_ru[m] : sc_en[m]);
+#endif
+      } else if (i == 5 && _node_prefs) {
+        static const int unread_vals[3] = { 16, 32, 64 };
+        int idx = constrain(_node_prefs->ui_max_unread_idx, 0, 2);
+        snprintf(val, val_len, "%d", unread_vals[idx]);
+      }
+      return true;
+    }
+
+    if (page == SettingsPage::DISP) {
+      if (i == 1) {
+        snprintf(val, val_len, "%s", (_node_prefs && _node_prefs->ui_lang == 1) ? "RU" : "EN");
+      } else if (i == 2) {
+        int dim = _task->getClockDimMode();
+        snprintf(val, val_len, "%s", dim == 0 ? _TR("Off", "Выкл") : _TR("Clock", "Всегда"));
+      } else if (i == 3 && _node_prefs) {
+        static const char* rot_vals[4] = { "0", "90", "180", "270" };
+        int r = constrain(_node_prefs->ui_display_rotation, 0, 3);
+        snprintf(val, val_len, "%s\xb0", rot_vals[r]);
+      } else if (i >= 4) {
+        int k = i - 4;
+        const UIExtraSetting* extra = nullptr;
+        int n_extra = uiExtraSettings(&extra);
+        if (k >= 0 && k < n_extra && extra && extra[k].value) {
+          extra[k].value(val, val_len);
+        }
+      }
+      return true;
+    }
+
+    if (page == SettingsPage::COMMS) {
+      if (i == 1) {
+#ifdef WITH_WIFI_SWITCHING
+        uint8_t mode = the_mesh.getWifiPrefs()->comms_mode;
+        if (mode == COMMS_MODE_WIFI) {
+          if (the_mesh.isWifiConnecting())     snprintf(val, val_len, "WiFi...");
+          else if (the_mesh.isWifiConnected()) snprintf(val, val_len, "WiFi OK");
+          else                                 snprintf(val, val_len, "WiFi");
+        } else if (mode == COMMS_MODE_USB) {
+          snprintf(val, val_len, "USB");
+        } else {
+          snprintf(val, val_len, "BLE");
+        }
+#else
+        snprintf(val, val_len, "BLE");
+#endif
+      } else if (i == 2) {
+#ifdef WITH_COMPANION_CLI
+        bool show = _pin_show_until && millis() < _pin_show_until;
+        snprintf(val, val_len, "%s", show ? the_mesh.getCliPin() : "****");
+#endif
+      } else if (i == 3) {
+#ifdef WITH_COMPANION_CLI
+        int tsm = the_mesh.getTimesyncMode();
+        static const char* ts_en[3] = { "All", "GPS", "Mesh" };
+        static const char* ts_ru[3] = { "Все", "GPS", "Mesh" };
+        if (tsm >= 0 && tsm < 3) {
+          snprintf(val, val_len, "%s", uiIsLangRu() ? ts_ru[tsm] : ts_en[tsm]);
+        } else {
+          const char* ts_lbl = uiTimeSourceModeLabel(tsm);
+          snprintf(val, val_len, "%s", ts_lbl ? ts_lbl : "?");
+        }
+#endif
+      }
+      return true;
+    }
+
+    if (page == SettingsPage::SYSTEM) {
+      if (i == 1 && _node_prefs) {
+        static const char* p_en[4] = { "Auto", "Off", "Save", "Max" };
+        static const char* p_ru[4] = { "Авто", "Выкл", "Эконом", "Макс" };
+        int m = constrain(_node_prefs->power_mode, 0, 3);
+        snprintf(val, val_len, "%s", uiIsLangRu() ? p_ru[m] : p_en[m]);
+      } else if (i == 2) {
+        uint16_t mv = board.getBattAdcMilliVolts();
+        snprintf(val, val_len, "%u.%02uV >", mv / 1000, (mv % 1000) / 10);
+      } else if (i == 3) {
+        snprintf(val, val_len, ">");
+      }
+      return true;
+    }
+
+    if (page == SettingsPage::CODECS) {
+      if (i == 1) snprintf(val, val_len, "%s", the_mesh.isMCOtxtEnabled() ? _TR("On", "Вкл") : _TR("Off", "Выкл"));
+      else if (i == 2) snprintf(val, val_len, "%s", the_mesh.isMCMPDetectEnabled() ? _TR("On", "Вкл") : _TR("Off", "Выкл"));
+      else if (i == 3) snprintf(val, val_len, "%s", the_mesh.isAEICDetectEnabled() ? _TR("On", "Вкл") : _TR("Off", "Выкл"));
+      else if (i == 4) snprintf(val, val_len, "%s", the_mesh.isMCOimgDetectEnabled() ? _TR("On", "Вкл") : _TR("Off", "Выкл"));
+      return true;
+    }
+
+    return false;
+  }
+
+  void onSettingPress(SettingsPage page, int i, bool fwd) {
+    if (page == SettingsPage::ROOT) {
+      if (!fwd) { _in_settings = false; return; }
+      if (i == 0) { _settings_page = SettingsPage::CHAT; }
+      else if (i == 1) { _settings_page = SettingsPage::DISP; }
+      else if (i == 2) { _settings_page = SettingsPage::COMMS; }
+      else if (i == 3) { _settings_page = SettingsPage::SYSTEM; }
+      else if (i == 4) { _in_settings = false; return; }
+      _settings_sel = 1;
+      _settings_scroll = 0;
+      while (_settings_sel < settingsPageItemCount(_settings_page) && isSettingHidden(_settings_page, _settings_sel)) {
+        _settings_sel++;
+      }
+      return;
+    }
+
+    if (i == 0) {
+      if (page == SettingsPage::CODECS) {
+        _settings_page = SettingsPage::SYSTEM;
+        _settings_sel = 3;
+        _settings_scroll = 0;
+      } else {
+        SettingsPage prev = _settings_page;
+        _settings_page = SettingsPage::ROOT;
+        if (prev == SettingsPage::CHAT) _settings_sel = 0;
+        else if (prev == SettingsPage::DISP) _settings_sel = 1;
+        else if (prev == SettingsPage::COMMS) _settings_sel = 2;
+        else if (prev == SettingsPage::SYSTEM) _settings_sel = 3;
+        _settings_scroll = 0;
+      }
+      return;
+    }
+
+    if (page == SettingsPage::CHAT) {
+      if (i == 1) {
+        _pm_clock_mode = (_pm_clock_mode + 1) % 2;
+        if (_node_prefs) _node_prefs->ui_pm_clock_mode = _pm_clock_mode;
+        the_mesh.savePrefs();
+      } else if (i == 2 && _node_prefs) {
+        _node_prefs->ui_msg_hold = (_node_prefs->ui_msg_hold + 1) % 4;
+        the_mesh.savePrefs();
+      } else if (i == 3) {
+#ifdef WITH_COMPANION_CLI
+        bool ch = the_mesh.isCyr2LatChannelsEnabled();
+        bool dm = the_mesh.isCyr2LatContactsEnabled();
+        int state = (ch ? 1 : 0) | (dm ? 2 : 0);
+        state = fwd ? (state + 1) % 4 : (state + 3) % 4;
+        the_mesh.setCyr2LatChannelsEnabled(state == 1 || state == 3);
+        the_mesh.setCyr2LatContactsEnabled(state == 2 || state == 3);
+#endif
+      } else if (i == 4) {
+#ifdef WITH_COMPANION_CLI
+        int m = the_mesh.getChatMode();
+        the_mesh.setChatMode(fwd ? (m + 1) % 4 : (m + 3) % 4);
+#endif
+      } else if (i == 5 && _node_prefs) {
+        int idx = _node_prefs->ui_max_unread_idx;
+        idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
+        _node_prefs->ui_max_unread_idx = idx;
+        _node_prefs->ui_max_log_idx = idx;
+        static const int size_table[3] = { 16, 32, 64 };
+        _task->updateMsgMaxSizes(size_table[idx], size_table[idx]);
+        the_mesh.savePrefs();
+      }
+    } else if (page == SettingsPage::DISP) {
+      if (i == 1 && _node_prefs) {
+#ifdef CYRILLIC_SUPPORT
+        _node_prefs->ui_lang = (_node_prefs->ui_lang == 1) ? 0 : 1;
+        the_mesh.savePrefs();
+#endif
+      } else if (i == 2) {
+        _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
+        the_mesh.savePrefs();
+      } else if (i == 3 && _node_prefs) {
+        int r = _node_prefs->ui_display_rotation;
+        r = fwd ? (r + 1) % 4 : (r + 3) % 4;
+        _node_prefs->ui_display_rotation = r;
+        _task->setDisplayRotation(r);
+        the_mesh.savePrefs();
+      } else if (i >= 4) {
+        int k = i - 4;
+        const UIExtraSetting* extra = nullptr;
+        int n_extra = uiExtraSettings(&extra);
+        if (k >= 0 && k < n_extra && extra && extra[k].press) {
+          extra[k].press(fwd);
+        }
+      }
+    } else if (page == SettingsPage::COMMS) {
+      if (i == 1) {
+#ifdef WITH_WIFI_SWITCHING
+        if (!_wifi_wait && fwd) {
+          _in_wifi_select   = true;
+          _wifi_sel         = 0;
+          _wifi_scan_scroll = 0;
+          _wifi_scanning    = true;
+          _wifi_scan_n      = -1;
+          WiFi.mode(WIFI_STA);
+          WiFi.scanNetworks(true);
+        }
+#endif
+      } else if (i == 2) {
+#ifdef WITH_COMPANION_CLI
+        _pin_show_until = millis() + 3000;
+#endif
+      } else if (i == 3) {
+#ifdef WITH_COMPANION_CLI
+        int n_ts = uiTimeSourceModeCount();
+        int m = the_mesh.getTimesyncMode();
+        the_mesh.setTimesyncMode(fwd ? (m + 1) % n_ts : (m + n_ts - 1) % n_ts);
+#endif
+      }
+    } else if (page == SettingsPage::SYSTEM) {
+      if (i == 1 && _node_prefs) {
+        int m = _node_prefs->power_mode;
+        _node_prefs->power_mode = fwd ? (m + 1) % 4 : (m + 3) % 4;
+        _node_prefs->powersaving_enabled = (_node_prefs->power_mode != POWER_MODE_OFF) ? 1 : 0;
+        the_mesh.savePrefs();
+      } else if (i == 2) {
+        _adccal.measure(board);
+        _in_adccal = true;
+      } else if (i == 3) {
+        _settings_page = SettingsPage::CODECS;
+        _settings_sel = 1;
+        _settings_scroll = 0;
+      }
+    } else if (page == SettingsPage::CODECS) {
+      if (i == 1) the_mesh.setMCOtxtEnabled(!the_mesh.isMCOtxtEnabled());
+      else if (i == 2) the_mesh.setMCMPDetectEnabled(!the_mesh.isMCMPDetectEnabled());
+      else if (i == 3) the_mesh.setAEICDetectEnabled(!the_mesh.isAEICDetectEnabled());
+      else if (i == 4) the_mesh.setMCOimgDetectEnabled(!the_mesh.isMCOimgDetectEnabled());
+    }
+  }
+
 
   // Cal ADC confirm screen. Full screen, no header, so it fits a 128x64 OLED:
   // five rows of the smallest font — title, volts, multiplier, status, action.
@@ -1003,8 +1296,8 @@ public:
 #endif
       if (!_in_settings) {
         display.setColor(UIColor::primary_txt);
-        display.drawTextCentered(display.width() / 2, content_y + 8, "Settings");
-        display.drawTextCentered(display.width() / 2, content_y + 24, PRESS_LABEL " to enter");
+        display.drawTextCentered(display.width() / 2, content_y + 8, _TR("Settings", "Настройки"));
+        display.drawTextCentered(display.width() / 2, content_y + 24, _TR(PRESS_LABEL " to enter", PRESS_LABEL " - войти"));
         // Firmware version with the commit hash, e.g. "v1.17.1-6cf6277b" — the boot
         // splash is gone in 3 s, and this is where to check what is flashed. On a
         // 64-px OLED there is no room at content_y + 40: it takes the bottom line.
@@ -1015,132 +1308,22 @@ public:
           display.drawTextCentered(display.width() / 2, ver_y, FIRMWARE_VERSION);
         }
       } else {
-        static const char* pm_clok_vals[2] = { "all", "PM" };
-        static const char* dim_vals[2]     = { "ON", "OFF" };
-#ifdef WITH_COMPANION_CLI
-        static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
-        static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
-#endif
         const int CURSOR_W = 6 * hdr_size, LINE_H = display.getLineH(hdr_size) - 1, Y0 = content_y;
         _settings_visible = (display.height() - Y0) / LINE_H;
-        int total_n = totalSettings();
-        const UIExtraSetting* extra_items = nullptr;
-        int n_extra = uiExtraSettings(&extra_items);
+        int total_n = settingsPageItemCount(_settings_page);
 
         display.setColor(UIColor::primary_txt);
         int _drawn = 0;
         for (int i = _settings_scroll; i < total_n && _drawn < _settings_visible; i++) {
-          if (isSettingHidden(i)) continue;
+          if (isSettingHidden(_settings_page, i)) continue;
           int y = Y0 + (_drawn++) * LINE_H;
           display.setColor(UIColor::primary_txt);
           display.setCursor(0, y);
           display.print(_settings_sel == i ? ">" : " ");
           display.setCursor(CURSOR_W, y);
-          // label
-          const char* lbl = "Back";
-#ifdef WITH_COMPANION_CLI
-          if      (i == 0) lbl = "CLI Chat";
-          else if (i == 1) lbl = "CLI PIN";
-          else if (i == 2) lbl = "Timesync";
-          else
-#endif
-#ifdef WITH_WIFI_SWITCHING
-          if      (i == SETTINGS_COMMS_IDX) lbl = "Comms";
-          else
-#endif
-          if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOCK";
-          else if (i == SETTINGS_DIM_IDX)  lbl = "CLOCK DIM";
-          else if (i == SETTINGS_HOLD_IDX) lbl = "MSG HOLD";
-#ifdef WITH_COMPANION_CLI
-          else if (i == SETTINGS_C2L_CH_IDX) lbl = "Cyr2Lat Chan";
-          else if (i == SETTINGS_C2L_DM_IDX) lbl = "Cyr2Lat DM";
-#endif
-          else if (i == SETTINGS_MCOTXT_IDX) lbl = "MCOtxt";
-          else if (i == SETTINGS_MCMP_IDX)   lbl = "MCMP detect";
-          else if (i == SETTINGS_AEIC_IDX)   lbl = "AEIC detect";
-          else if (i == SETTINGS_MCOIMG_IDX) lbl = "MCOimg detect";
-          else if (i == SETTINGS_ROT_IDX)      lbl = "Rotation";
-          else if (i == SETTINGS_UNREAD_IDX)  lbl = "Max Unread";
-          else if (i == SETTINGS_LOG_IDX)     lbl = "Max Log";
-          else if (i == SETTINGS_ADC_IDX)     lbl = "Cal ADC";
-          else if (i == SETTINGS_POWER_IDX)   lbl = "Power";
-          else if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
-            int k = i - (SETTINGS_N - 1);
-            if (extra_items && extra_items[k].label) lbl = extra_items[k].label;
-          }
-          display.print(lbl);
-          // value (not for Back)
-          if (i != total_n - 1) {
-            char val[24] = "";
-            if (i >= SETTINGS_N - 1 && i < SETTINGS_N - 1 + n_extra) {
-              int k = i - (SETTINGS_N - 1);
-              if (extra_items && extra_items[k].value) {
-                extra_items[k].value(val, sizeof(val));
-              }
-            } else
-#ifdef WITH_COMPANION_CLI
-            if (i == 0) {
-              snprintf(val, sizeof(val), "%s", chat_vals[the_mesh.getChatMode()]);
-            } else if (i == 1) {
-              bool show = _pin_show_until && millis() < _pin_show_until;
-              snprintf(val, sizeof(val), "%s", show ? the_mesh.getCliPin() : "****");
-            } else if (i == 2) {
-              int tsm = the_mesh.getTimesyncMode();
-              const char* ts_lbl = (tsm >= 0 && tsm < 3) ? ts_vals[tsm] : uiTimeSourceModeLabel(tsm);
-              snprintf(val, sizeof(val), "%s", ts_lbl ? ts_lbl : "?");
-            } else
-#endif
-#ifdef WITH_WIFI_SWITCHING
-            if (i == SETTINGS_COMMS_IDX) {
-              uint8_t mode = the_mesh.getWifiPrefs()->comms_mode;
-              if (mode == COMMS_MODE_WIFI) {
-                if (the_mesh.isWifiConnecting())     snprintf(val, sizeof(val), "WiFi ...");
-                else if (the_mesh.isWifiConnected()) snprintf(val, sizeof(val), "WiFi OK");
-                else                                 snprintf(val, sizeof(val), "WiFi");
-              } else if (mode == COMMS_MODE_USB) {
-                snprintf(val, sizeof(val), "USB");
-              } else {
-                snprintf(val, sizeof(val), "BLE");
-              }
-            } else
-#endif
-            if (i == SETTINGS_PM_IDX) {
-              snprintf(val, sizeof(val), "%s", pm_clok_vals[_pm_clock_mode]);
-            } else if (i == SETTINGS_DIM_IDX) {
-              snprintf(val, sizeof(val), "%s", dim_vals[_task->getClockDimMode()]);
-            } else if (i == SETTINGS_HOLD_IDX && _node_prefs) {
-              static const char* hold_vals[4] = { "Off", "5s", "15s", "30s" };
-              snprintf(val, sizeof(val), "%s", hold_vals[_node_prefs->ui_msg_hold < 4 ? _node_prefs->ui_msg_hold : 1]);
-#ifdef WITH_COMPANION_CLI
-            } else if (i == SETTINGS_C2L_CH_IDX) {
-              snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatChannelsEnabled() ? "On" : "Off");
-            } else if (i == SETTINGS_C2L_DM_IDX) {
-              snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatContactsEnabled() ? "On" : "Off");
-#endif
-            } else if (i == SETTINGS_MCOTXT_IDX) {
-              snprintf(val, sizeof(val), "%s", the_mesh.isMCOtxtEnabled() ? "On" : "Off");
-            } else if (i == SETTINGS_MCMP_IDX) {
-              snprintf(val, sizeof(val), "%s", the_mesh.isMCMPDetectEnabled() ? "On" : "Off");
-            } else if (i == SETTINGS_AEIC_IDX) {
-              snprintf(val, sizeof(val), "%s", the_mesh.isAEICDetectEnabled() ? "On" : "Off");
-            } else if (i == SETTINGS_MCOIMG_IDX) {
-              snprintf(val, sizeof(val), "%s", the_mesh.isMCOimgDetectEnabled() ? "On" : "Off");
-            } else if (i == SETTINGS_ROT_IDX && _node_prefs) {
-              static const char* rot_vals[4] = { "0", "90", "180", "270" };
-              snprintf(val, sizeof(val), "%s deg", rot_vals[constrain(_node_prefs->ui_display_rotation, 0, 3)]);
-            } else if (i == SETTINGS_UNREAD_IDX && _node_prefs) {
-              static const int unread_vals[3] = { 16, 32, 64 };
-              snprintf(val, sizeof(val), "%d", unread_vals[constrain(_node_prefs->ui_max_unread_idx, 0, 2)]);
-            } else if (i == SETTINGS_LOG_IDX && _node_prefs) {
-              static const int log_vals[3] = { 16, 32, 64 };
-              snprintf(val, sizeof(val), "%d", log_vals[constrain(_node_prefs->ui_max_log_idx, 0, 2)]);
-            } else if (i == SETTINGS_ADC_IDX) {
-              uint16_t mv = board.getBattAdcMilliVolts();
-              snprintf(val, sizeof(val), "%u.%02uV", mv / 1000, (mv % 1000) / 10);
-            } else if (i == SETTINGS_POWER_IDX && _node_prefs) {
-              static const char* pmode_vals[4] = { "auto", "off", "cons", "aggr" };
-              snprintf(val, sizeof(val), "%s", pmode_vals[constrain(_node_prefs->power_mode, 0, 3)]);
-            }
+          display.print(getSettingLabel(_settings_page, i));
+          char val[24] = "";
+          if (getSettingValue(_settings_page, i, val, sizeof(val))) {
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
         }
@@ -1314,19 +1497,31 @@ public:
 #endif
     // Settings edit mode absorbs all navigation before standard page switching
     if (_page == HomePage::SETTINGS && _in_settings) {
-      int total_n = totalSettings();
-      const UIExtraSetting* extra_items = nullptr;
-      int n_extra = uiExtraSettings(&extra_items);
+      int total_n = settingsPageItemCount(_settings_page);
 
-      // ● long (KEY_CANCEL) or KEY_PREV = exit settings
+      // ● long (KEY_CANCEL) or KEY_PREV = exit subpage or settings
       if (c == KEY_CANCEL || c == KEY_PREV) {
-        _in_settings = false;
+        if (_settings_page == SettingsPage::CODECS) {
+          _settings_page = SettingsPage::SYSTEM;
+          _settings_sel = 3;
+          _settings_scroll = 0;
+        } else if (_settings_page != SettingsPage::ROOT) {
+          SettingsPage prev = _settings_page;
+          _settings_page = SettingsPage::ROOT;
+          if (prev == SettingsPage::CHAT) _settings_sel = 0;
+          else if (prev == SettingsPage::DISP) _settings_sel = 1;
+          else if (prev == SettingsPage::COMMS) _settings_sel = 2;
+          else if (prev == SettingsPage::SYSTEM) _settings_sel = 3;
+          _settings_scroll = 0;
+        } else {
+          _in_settings = false;
+        }
         return true;
       }
       // ↑ (KEY_UP) = previous item, with wrap-around scroll
       if (c == KEY_UP) {
         _settings_sel = (_settings_sel + total_n - 1) % total_n;
-        while (isSettingHidden(_settings_sel)) _settings_sel = (_settings_sel + total_n - 1) % total_n;
+        while (isSettingHidden(_settings_page, _settings_sel)) _settings_sel = (_settings_sel + total_n - 1) % total_n;
         if (_settings_sel == total_n - 1) {
           _settings_scroll = (total_n > _settings_visible) ? (total_n - _settings_visible) : 0;
         } else if (_settings_sel < _settings_scroll) {
@@ -1337,7 +1532,7 @@ public:
       // ↓ (KEY_DOWN) or KEY_NEXT = next item, with wrap-around scroll
       if (c == KEY_DOWN || c == KEY_NEXT) {
         _settings_sel = (_settings_sel + 1) % total_n;
-        while (isSettingHidden(_settings_sel)) _settings_sel = (_settings_sel + 1) % total_n;
+        while (isSettingHidden(_settings_page, _settings_sel)) _settings_sel = (_settings_sel + 1) % total_n;
         if (_settings_sel == 0) _settings_scroll = 0;
         else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
@@ -1347,92 +1542,7 @@ public:
       // For binary items direction doesn't matter; for multi-value LEFT reverses.
       if (c == KEY_RIGHT || c == KEY_ENTER || c == KEY_LEFT) {
         bool fwd = (c != KEY_LEFT);
-        if (_settings_sel == total_n - 1) {
-          _in_settings = false;
-        } else if (_settings_sel >= SETTINGS_N - 1 && _settings_sel < SETTINGS_N - 1 + n_extra) {
-          int k = _settings_sel - (SETTINGS_N - 1);
-          if (extra_items && extra_items[k].press) {
-            extra_items[k].press(fwd);
-          }
-        } else if (_settings_sel == SETTINGS_PM_IDX) {
-          _pm_clock_mode = (_pm_clock_mode + 1) % 2;  // binary — same either way
-          _node_prefs->ui_pm_clock_mode = _pm_clock_mode;
-          the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_DIM_IDX) {
-          _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
-          the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_HOLD_IDX && _node_prefs) {
-          _node_prefs->ui_msg_hold = (_node_prefs->ui_msg_hold + 1) % 4;
-          the_mesh.savePrefs();
-#ifdef WITH_COMPANION_CLI
-        } else if (_settings_sel == SETTINGS_C2L_CH_IDX) {
-          the_mesh.setCyr2LatChannelsEnabled(!the_mesh.isCyr2LatChannelsEnabled());
-        } else if (_settings_sel == SETTINGS_C2L_DM_IDX) {
-          the_mesh.setCyr2LatContactsEnabled(!the_mesh.isCyr2LatContactsEnabled());
-#endif
-        } else if (_settings_sel == SETTINGS_MCOTXT_IDX) {
-          the_mesh.setMCOtxtEnabled(!the_mesh.isMCOtxtEnabled());
-        } else if (_settings_sel == SETTINGS_MCMP_IDX) {
-          the_mesh.setMCMPDetectEnabled(!the_mesh.isMCMPDetectEnabled());
-        } else if (_settings_sel == SETTINGS_AEIC_IDX) {
-          the_mesh.setAEICDetectEnabled(!the_mesh.isAEICDetectEnabled());
-        } else if (_settings_sel == SETTINGS_MCOIMG_IDX) {
-          the_mesh.setMCOimgDetectEnabled(!the_mesh.isMCOimgDetectEnabled());
-#ifdef WITH_COMPANION_CLI
-        } else if (_settings_sel == 0) {
-          int m = the_mesh.getChatMode();
-          the_mesh.setChatMode(fwd ? (m + 1) % 4 : (m + 3) % 4);
-        } else if (_settings_sel == 1) {
-          _pin_show_until = millis() + 3000;
-        } else if (_settings_sel == 2) {
-          int n_ts = uiTimeSourceModeCount();
-          int m = the_mesh.getTimesyncMode();
-          the_mesh.setTimesyncMode(fwd ? (m + 1) % n_ts : (m + n_ts - 1) % n_ts);
-#endif
-#ifdef WITH_WIFI_SWITCHING
-        } else if (_settings_sel == SETTINGS_COMMS_IDX) {
-          if (!_wifi_wait && fwd) {
-            _in_wifi_select   = true;
-            _wifi_sel         = 0;
-            _wifi_scan_scroll = 0;
-            _wifi_scanning    = true;
-            _wifi_scan_n      = -1;
-            WiFi.mode(WIFI_STA);
-            WiFi.scanNetworks(true);  // async
-          }
-#endif
-        } else if (_settings_sel == SETTINGS_ROT_IDX && _node_prefs) {
-          int r = _node_prefs->ui_display_rotation;
-          r = fwd ? (r + 1) % 4 : (r + 3) % 4;
-          _node_prefs->ui_display_rotation = r;
-          _task->setDisplayRotation(r);
-          the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_UNREAD_IDX && _node_prefs) {
-          int idx = _node_prefs->ui_max_unread_idx;
-          idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
-          _node_prefs->ui_max_unread_idx = idx;
-          static const int size_table[3] = { 16, 32, 64 };
-          _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
-                                   size_table[_node_prefs->ui_max_log_idx]);
-          the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_LOG_IDX && _node_prefs) {
-          int idx = _node_prefs->ui_max_log_idx;
-          idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
-          _node_prefs->ui_max_log_idx = idx;
-          static const int size_table[3] = { 16, 32, 64 };
-          _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
-                                   size_table[_node_prefs->ui_max_log_idx]);
-          the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_ADC_IDX) {
-          // Measure once on entry; the confirm screen shows that snapshot.
-          _adccal.measure(board);
-          _in_adccal = true;
-        } else if (_settings_sel == SETTINGS_POWER_IDX && _node_prefs) {
-          int m = _node_prefs->power_mode;
-          _node_prefs->power_mode = fwd ? (m + 1) % 4 : (m + 3) % 4;
-          _node_prefs->powersaving_enabled = (_node_prefs->power_mode != POWER_MODE_OFF) ? 1 : 0;
-          the_mesh.savePrefs();
-        }
+        onSettingPress(_settings_page, _settings_sel, fwd);
         return true;
       }
       return true;  // absorb all other keys in edit mode
@@ -1510,6 +1620,7 @@ public:
 #endif
     if (c == KEY_ENTER && _page == HomePage::SETTINGS) {
       _in_settings = true;
+      _settings_page = SettingsPage::ROOT;
       _settings_sel = 0;
       _settings_scroll = 0;
       return true;

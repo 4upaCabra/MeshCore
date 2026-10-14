@@ -124,6 +124,7 @@ public:
   uint8_t  ui_mcoimg_detect_off = 0; // 0 = show/forward MCOimg placeholders
   uint8_t  framed_packets_enabled = 1; // 0 = never fragment long companion frames
   int8_t   tz_offset = 0;
+  uint8_t  ui_lang = 0;   // 0 = EN (default), 1 = RU
 
 private:
   class RadioPrefs : public ConfigSerializer {
@@ -263,6 +264,7 @@ private:
       def("aeic_det_off", _parent->ui_aeic_detect_off);
       def("mcoimg_det_off", _parent->ui_mcoimg_detect_off);
       def("framed_pkt", _parent->framed_packets_enabled);
+      def("lang", _parent->ui_lang);
     }
   public:
     UIPrefs(NodePrefs* parent) : _parent(parent) { }
