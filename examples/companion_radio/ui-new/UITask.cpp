@@ -102,7 +102,7 @@ static int calcDynamicBodySize(DisplayDriver& display, const char* msg, int msg_
   #define UI_RECENT_LIST_SIZE 4
 #endif
 
-#if UI_HAS_JOYSTICK
+#if UI_HAS_JOYSTICK || UI_HAS_ROTARY_INPUT
   #define PRESS_LABEL "press Enter"
   // On joystick boards a short SELECT click = KEY_ENTER; hibernation must require
   // a deliberate press-and-hold, which the SELECT long press maps to (KEY_CANCEL).
@@ -2201,6 +2201,17 @@ void UITask::loop() {
   }
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
+  #ifdef UI_HAS_NAV_INPUT
+  if (ev == BUTTON_EVENT_CLICK) {
+    c = checkDisplayOn(KEY_ENTER);
+  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+    if (_display) _display->turnOff();
+  } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
+    c = handleDoubleClick(KEY_SELECT);
+  } else if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
+    c = handleTripleClick(KEY_SELECT);
+  }
+  #else
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_NEXT);
   } else if (ev == BUTTON_EVENT_LONG_PRESS) {
@@ -2210,6 +2221,7 @@ void UITask::loop() {
   } else if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
     c = handleTripleClick(KEY_SELECT);
   }
+  #endif
 #endif
 #if defined(UI_HAS_ROTARY_INPUT)
   RotaryInputEvent rotaryEv = rotary_input.poll();
