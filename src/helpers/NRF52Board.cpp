@@ -143,10 +143,9 @@ bool NRF52Board::checkBootVoltage(const PowerMgtConfig* config) {
   MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage = %u mV (threshold = %u mV)",
       boot_voltage_mv, config->voltage_bootlock);
 
-  // Only trigger shutdown if reading is valid (>1000mV) AND below threshold
-  // This prevents spurious shutdowns on ADC glitches or uninitialized reads
-  if (boot_voltage_mv > 1000 && boot_voltage_mv < config->voltage_bootlock) {
-    MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage too low - entering protective shutdown");
+  // If voltage is below the boot threshold, enter protective shutdown
+  if (boot_voltage_mv < config->voltage_bootlock) {
+    MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage too low (%u mV) - entering protective shutdown", boot_voltage_mv);
 
     initiateShutdown(SHUTDOWN_REASON_BOOT_PROTECT);
     return false;  // Should never reach this

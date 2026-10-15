@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <RadioLib.h>
 
 #include "PromicroBoard.h"
 
@@ -12,7 +13,28 @@ const PowerMgtConfig power_config = {
 };
 
 void PromicroBoard::initiateShutdown(uint8_t reason) {
+  // Flash LED briefly to indicate shutdown reason
+  #if defined(PIN_LED)
+    pinMode(PIN_LED, OUTPUT);
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(PIN_LED, LED_STATE_ON);
+      delay(30);
+      digitalWrite(PIN_LED, !LED_STATE_ON);
+      delay(30);
+    }
+  #endif
+
+  // Cut power to SX1262
   digitalWrite(SX126X_POWER_EN, LOW);
+
+  // Isolate SX1262 pins to prevent parasitic powering via internal ESD diodes
+  pinMode(P_LORA_NSS, INPUT);
+  pinMode(P_LORA_RESET, INPUT);
+  pinMode(P_LORA_BUSY, INPUT);
+  pinMode(P_LORA_MISO, INPUT);
+  pinMode(P_LORA_SCLK, INPUT);
+  pinMode(P_LORA_MOSI, INPUT);
+  if (SX126X_RXEN != RADIOLIB_NC) pinMode(SX126X_RXEN, INPUT);
 
   if (reason == SHUTDOWN_REASON_LOW_VOLTAGE ||
       reason == SHUTDOWN_REASON_BOOT_PROTECT) {
@@ -26,6 +48,21 @@ void PromicroBoard::initiateShutdown(uint8_t reason) {
 void PromicroBoard::begin() {
     NRF52BoardDCDC::begin();
     btn_prev_state = HIGH;
+
+    #if defined(PIN_LED)
+      pinMode(PIN_LED, OUTPUT);
+      digitalWrite(PIN_LED, LED_STATE_ON);
+      delay(50);
+      digitalWrite(PIN_LED, !LED_STATE_ON);
+    #endif
+
+    // Start hardware WDT early (8 seconds timeout)
+    NRF_WDT->CONFIG = (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) |
+                      (WDT_CONFIG_HALT_Pause << WDT_CONFIG_HALT_Pos);
+    NRF_WDT->CRV = 8 * 32768; // 8 seconds
+    NRF_WDT->RREN |= WDT_RREN_RR0_Msk;
+    NRF_WDT->TASKS_START = 1;
+    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
 
     pinMode(PIN_VBAT_READ, INPUT);
 
@@ -49,5 +86,5 @@ void PromicroBoard::begin() {
     }
 #endif
     digitalWrite(SX126X_POWER_EN, HIGH);
-    delay(10);   // give sx1262 some time to power up
+    delay(15);   // give sx1262 some time to power up
 }
