@@ -31,13 +31,6 @@ static unsigned long msgHoldMillis(const NodePrefs* prefs) {
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
 
-// Count Unicode code points in a UTF-8 string (non-continuation bytes)
-static int utf8_char_count(const char* s) {
-  int n = 0;
-  while (*s) { if ((*s & 0xC0) != 0x80) n++; s++; }
-  return n;
-}
-
 // Truncate UTF-8 string to at most max_bytes, never cutting in the middle of a multibyte sequence
 static void utf8_truncate(char* s, int max_bytes) {
   if (!s || max_bytes < 0) return;
@@ -48,45 +41,6 @@ static void utf8_truncate(char* s, int max_bytes) {
   s[i] = '\0';
 }
 
-// Dynamically pick body text size (2 vs 1) based on actual wrapped lines including '\n'.
-// Size 2 is used whenever the message fits into available vertical lines (body2_lines >= 1).
-static int calcDynamicBodySize(DisplayDriver& display, const char* msg, int msg_start_y) {
-  int msg_len     = utf8_char_count(msg);
-  int body2_lines = (display.height() - msg_start_y) / 16;
-  int body2_cpl   = display.width() / 12;
-  int sim_lines   = 0;
-  if (body2_lines >= 1 && body2_cpl > 0) {
-    int byte_pos = 0, char_pos = 0;
-    while (char_pos < msg_len) {
-      sim_lines++;
-      int bi = byte_pos, sc = 0, last_sp = -1, last_sp_char = -1;
-      int last_nl = -1, last_nl_char = -1;
-      while (msg[bi] && sc < body2_cpl) {
-        if (msg[bi] == '\n') {
-          last_nl = bi;
-          last_nl_char = char_pos + sc;
-          break;
-        }
-        if (msg[bi] == ' ') { last_sp = bi; last_sp_char = char_pos + sc; }
-        if ((msg[bi] & 0xC0) != 0x80) sc++;
-        bi++;
-      }
-      if (last_nl >= 0) {
-        char_pos = last_nl_char + 1;
-        byte_pos = last_nl + 1;
-      } else if (msg_len - char_pos <= body2_cpl) {
-        break;
-      } else if (last_sp >= 0) {
-        char_pos = last_sp_char + 1;
-        byte_pos = last_sp + 1;
-      } else {
-        char_pos += sc;
-        byte_pos = bi;
-      }
-    }
-  }
-  return ((body2_lines >= 1) && (sim_lines <= body2_lines)) ? 2 : 1;
-}
 #define BOOT_SCREEN_MILLIS   3000   // 3 seconds
 
 #ifdef PIN_STATUS_LED
@@ -136,15 +90,15 @@ static void formatDuration(char* buf, size_t len, uint32_t secs) {
   uint32_t d = h / 24;
   uint32_t y = d / 365;
   if (secs < 60)
-    snprintf(buf, len, "%us", secs);
+    snprintf(buf, len, _TR("%us", "%uс"), secs);
   else if (h == 0)
-    snprintf(buf, len, "%um", m);
+    snprintf(buf, len, _TR("%um", "%uм"), m);
   else if (d == 0)
-    snprintf(buf, len, "%uh %um", h, m % 60);
+    snprintf(buf, len, _TR("%uh %um", "%uч %uм"), h, m % 60);
   else if (y == 0)
-    snprintf(buf, len, "%ud %uh %um", d, h % 24, m % 60);
+    snprintf(buf, len, _TR("%ud %uh %um", "%uд %uч %uм"), d, h % 24, m % 60);
   else
-    snprintf(buf, len, "%uy %ud %uh %um", y, d - y * 365, h % 24, m % 60);
+    snprintf(buf, len, _TR("%uy %ud %uh %um", "%uг %uд %uч %uм"), y, d - y * 365, h % 24, m % 60);
 }
 
 class SplashScreen : public UIScreen {
@@ -383,15 +337,33 @@ public:
 #endif
   }
 
+  // Extra settings the build lists in a folder (UIExtensions.h), in its order.
+  static int extraCount(uint8_t folder) {
+    const UIExtraSetting* extra = nullptr;
+    int n = uiExtraSettings(&extra), c = 0;
+    for (int k = 0; k < n && extra; k++) if (extra[k].folder == folder) c++;
+    return c;
+  }
+  static const UIExtraSetting* extraAt(uint8_t folder, int idx) {
+    const UIExtraSetting* extra = nullptr;
+    int n = uiExtraSettings(&extra);
+    for (int k = 0; k < n && extra; k++) {
+      if (extra[k].folder != folder) continue;
+      if (idx-- == 0) return &extra[k];
+    }
+    return nullptr;
+  }
+  static bool extraHidden(uint8_t folder, int idx, DisplayDriver* d) {
+    const UIExtraSetting* e = extraAt(folder, idx);
+    return e && e->visible && d && !e->visible(*d);
+  }
+
   int settingsPageItemCount(SettingsPage page) const {
     switch (page) {
       case SettingsPage::ROOT:    return 5;
       case SettingsPage::CHAT:    return 6;
-      case SettingsPage::DISP: {
-        const UIExtraSetting* extra = nullptr;
-        return 4 + uiExtraSettings(&extra);
-      }
-      case SettingsPage::COMMS:   return 4;
+      case SettingsPage::DISP:    return 4 + extraCount(UI_FOLDER_DISPLAY);
+      case SettingsPage::COMMS:   return 5 + extraCount(UI_FOLDER_CONNECTION);
       case SettingsPage::SYSTEM:  return 4;
       case SettingsPage::CODECS:  return 5;
     }
@@ -401,9 +373,12 @@ public:
   bool isSettingHidden(SettingsPage page, int i) const {
     DisplayDriver* d = _task->getDisplay();
     if (page == SettingsPage::ROOT) {
-#if !defined(WITH_WIFI_SWITCHING) && !defined(WITH_COMPANION_CLI)
-      if (i == 2) return true;
-#endif
+      if (i == 2) {   // Connection: shown when anything in it is
+        for (int j = 1; j < settingsPageItemCount(SettingsPage::COMMS); j++) {
+          if (!isSettingHidden(SettingsPage::COMMS, j)) return false;
+        }
+        return true;
+      }
     } else if (page == SettingsPage::CHAT) {
 #ifndef WITH_COMPANION_CLI
       if (i == 3 || i == 4) return true;
@@ -416,21 +391,18 @@ public:
       if (i == 2) return true;
 #endif
       if (i == 3) return !(d && d->isEink());
-      if (i >= 4) {
-        int k = i - 4;
-        const UIExtraSetting* extra = nullptr;
-        int n_extra = uiExtraSettings(&extra);
-        if (k >= 0 && k < n_extra && extra && extra[k].visible && d) {
-          return !extra[k].visible(*d);
-        }
-      }
+      if (i >= 4) return extraHidden(UI_FOLDER_DISPLAY, i - 4, d);
     } else if (page == SettingsPage::COMMS) {
 #ifndef WITH_WIFI_SWITCHING
       if (i == 1) return true;
 #endif
 #ifndef WITH_COMPANION_CLI
-      if (i == 2 || i == 3) return true;
+      if (i == 2 || i == 4) return true;
 #endif
+#if !defined(BLE_PIN_CODE) && !defined(WITH_WIFI_SWITCHING)
+      if (i == 3) return true;   // no BLE in this build: nothing to name
+#endif
+      if (i >= 5) return extraHidden(UI_FOLDER_CONNECTION, i - 5, d);
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1) {
 #if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING))
@@ -464,17 +436,18 @@ public:
       if (i == 2) return _TR("Always On", "Часы всегда");
       if (i == 3) return _TR("Rotation", "Поворот");
       if (i >= 4) {
-        int k = i - 4;
-        const UIExtraSetting* extra = nullptr;
-        int n_extra = uiExtraSettings(&extra);
-        if (k >= 0 && k < n_extra && extra && extra[k].label) {
-          return extra[k].label;
-        }
+        const UIExtraSetting* e = extraAt(UI_FOLDER_DISPLAY, i - 4);
+        if (e && e->label) return e->label();
       }
     } else if (page == SettingsPage::COMMS) {
       if (i == 1) return _TR("Interface", "Интерфейс");
       if (i == 2) return _TR("Admin PIN", "PIN админа");
-      if (i == 3) return _TR("Timesync", "Синхр. врем.");
+      if (i == 3) return _TR("BLE Prefix", "Префикс BLE");
+      if (i == 4) return _TR("Timesync", "Синхр. врем.");
+      if (i >= 5) {
+        const UIExtraSetting* e = extraAt(UI_FOLDER_CONNECTION, i - 5);
+        if (e && e->label) return e->label();
+      }
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1) return _TR("Power Mode", "Энергосбер.");
       if (i == 2) return _TR("Batt Cal", "Калибр. АКБ");
@@ -534,12 +507,8 @@ public:
         int r = constrain(_node_prefs->ui_display_rotation, 0, 3);
         snprintf(val, val_len, "%s\xb0", rot_vals[r]);
       } else if (i >= 4) {
-        int k = i - 4;
-        const UIExtraSetting* extra = nullptr;
-        int n_extra = uiExtraSettings(&extra);
-        if (k >= 0 && k < n_extra && extra && extra[k].value) {
-          extra[k].value(val, val_len);
-        }
+        const UIExtraSetting* e = extraAt(UI_FOLDER_DISPLAY, i - 4);
+        if (e && e->value) e->value(val, val_len);
       }
       return true;
     }
@@ -565,7 +534,9 @@ public:
         bool show = _pin_show_until && millis() < _pin_show_until;
         snprintf(val, val_len, "%s", show ? the_mesh.getCliPin() : "****");
 #endif
-      } else if (i == 3) {
+      } else if (i == 3 && _node_prefs) {
+        snprintf(val, val_len, "%s", blePrefixEnabled(_node_prefs) ? _TR("On", "Вкл") : _TR("Off", "Выкл"));
+      } else if (i == 4) {
 #ifdef WITH_COMPANION_CLI
         int tsm = the_mesh.getTimesyncMode();
         static const char* ts_en[3] = { "All", "GPS", "Mesh" };
@@ -577,6 +548,9 @@ public:
           snprintf(val, val_len, "%s", ts_lbl ? ts_lbl : "?");
         }
 #endif
+      } else if (i >= 5) {
+        const UIExtraSetting* e = extraAt(UI_FOLDER_CONNECTION, i - 5);
+        if (e && e->value) e->value(val, val_len);
       }
       return true;
     }
@@ -687,12 +661,8 @@ public:
         _task->setDisplayRotation(r);
         the_mesh.savePrefs();
       } else if (i >= 4) {
-        int k = i - 4;
-        const UIExtraSetting* extra = nullptr;
-        int n_extra = uiExtraSettings(&extra);
-        if (k >= 0 && k < n_extra && extra && extra[k].press) {
-          extra[k].press(fwd);
-        }
+        const UIExtraSetting* e = extraAt(UI_FOLDER_DISPLAY, i - 4);
+        if (e && e->press) e->press(fwd);
       }
     } else if (page == SettingsPage::COMMS) {
       if (i == 1) {
@@ -711,12 +681,19 @@ public:
 #ifdef WITH_COMPANION_CLI
         _pin_show_until = millis() + 3000;
 #endif
-      } else if (i == 3) {
+      } else if (i == 3 && _node_prefs) {
+        // Applies at the next boot: the BLE name is set once when BLE starts.
+        _node_prefs->ui_ble_prefix = blePrefixEnabled(_node_prefs) ? BLE_PREFIX_OFF : BLE_PREFIX_ON;
+        the_mesh.savePrefs();
+      } else if (i == 4) {
 #ifdef WITH_COMPANION_CLI
         int n_ts = uiTimeSourceModeCount();
         int m = the_mesh.getTimesyncMode();
         the_mesh.setTimesyncMode(fwd ? (m + 1) % n_ts : (m + n_ts - 1) % n_ts);
 #endif
+      } else if (i >= 5) {
+        const UIExtraSetting* e = extraAt(UI_FOLDER_CONNECTION, i - 5);
+        if (e && e->press) e->press(fwd);
       }
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1 && _node_prefs) {
@@ -776,6 +753,7 @@ public:
   }
 
   int render(DisplayDriver& display) override {
+    if (uiOverlayActive()) return uiOverlayRender(display);
     if (_in_adccal) { renderAdcCal(display); return 60000; }
     char tmp[80];
     int hdr_size   = (display.width() >= 200) ? 2 : 1;
@@ -790,15 +768,13 @@ public:
       if (_task->peekTopMsg(info)) {
         int msg_start_y = hdr_line_h + 3;
 
-        int body_size = calcDynamicBodySize(display, info.msg, msg_start_y);
-
         // Header: "#N (D)name" + time elapsed top-right
         char time_str[8];
         int secs = (int)(_rtc->getCurrentTime() - info.timestamp);
         if (secs < 0) secs = 0;
-        if      (secs < 60)   snprintf(time_str, sizeof(time_str), "%ds",  secs);
-        else if (secs < 3600) snprintf(time_str, sizeof(time_str), "%dm",  secs / 60);
-        else                  snprintf(time_str, sizeof(time_str), "%dh",  secs / 3600);
+        if      (secs < 60)   snprintf(time_str, sizeof(time_str), _TR("%ds", "%dс"),  secs);
+        else if (secs < 3600) snprintf(time_str, sizeof(time_str), _TR("%dm", "%dм"),  secs / 60);
+        else                  snprintf(time_str, sizeof(time_str), _TR("%dh", "%dч"),  secs / 3600);
 
         int hdr_ch_w    = 6 * hdr_size;
         int hdr_total   = display.width() / hdr_ch_w;
@@ -827,9 +803,9 @@ public:
         display.setColor(UIColor::primary_txt);
         display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
-        // Message body with dynamic font
+        // Message body
         if (!uiDrawMessageContent(display, info.msg, 0, msg_start_y, display.width(), display.height() - msg_start_y)) {
-          display.setTextSize(body_size);
+          display.setTextSize(1);
           display.setCursor(0, msg_start_y);
           display.printWordWrap(info.msg, display.width());
         }
@@ -894,8 +870,12 @@ public:
       if (_task->isEinkDisplay()) {
         char dateBuf[32];
 #ifdef CYRILLIC_SUPPORT
-        snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
-                 days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+        if (uiIsLangRu()) {
+          snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
+                   days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+        } else {
+          strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+        }
 #else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
 #endif
@@ -915,8 +895,12 @@ public:
       } else if (_task->isColorTFTDisplay()) {
         char dateBuf[32];
 #ifdef CYRILLIC_SUPPORT
-        snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
-                 days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+        if (uiIsLangRu()) {
+          snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
+                   days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+        } else {
+          strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+        }
 #else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
 #endif
@@ -939,8 +923,12 @@ public:
         display.setTextSize(1);
         char dateBuf[32];
 #ifdef CYRILLIC_SUPPORT
-        snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
-                 days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+        if (uiIsLangRu()) {
+          snprintf(dateBuf, sizeof(dateBuf), "%s %d %s",
+                   days_ru[timeinfo.tm_wday], timeinfo.tm_mday, months_ru[timeinfo.tm_mon]);
+        } else {
+          strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+        }
 #else
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
 #endif
@@ -953,9 +941,9 @@ public:
       display.setTextSize(2);
       int unrd = _task->getUnreadMsgCount();
       if (unrd > 0)
-        sprintf(tmp, "NEW: %d", unrd);
+        sprintf(tmp, _TR("NEW: %d", "НОВЫХ: %d"), unrd);
       else
-        sprintf(tmp, "MSG: %d", _task->getMsgCount());
+        sprintf(tmp, _TR("MSG: %d", "СООБЩ: %d"), _task->getMsgCount());
       display.drawTextCentered(display.width() / 2, content_y, tmp);
 
       #ifdef WIFI_SSID
@@ -967,7 +955,7 @@ public:
       if (_task->hasConnection()) {
         display.setColor(UIColor::primary_txt);
         display.setTextSize(hdr_size);
-        display.drawTextCentered(display.width() / 2, content_y + 24, "< Connected >");
+        display.drawTextCentered(display.width() / 2, content_y + 24, _TR("< Connected >", "< Подключено >"));
 #ifdef WITH_WIFI_SWITCHING
       } else if (the_mesh.isWifiConnected()) {
         String wip = the_mesh.getWifiIP();
@@ -1004,11 +992,11 @@ public:
         if (a->name[0] == 0) continue;  // empty slot
         int secs = _rtc->getCurrentTime() - a->recv_timestamp;
         if (secs < 60) {
-          sprintf(tmp, "%ds", secs);
+          sprintf(tmp, _TR("%ds", "%dс"), secs);
         } else if (secs < 60*60) {
-          sprintf(tmp, "%dm", secs / 60);
+          sprintf(tmp, _TR("%dm", "%dм"), secs / 60);
         } else {
-          sprintf(tmp, "%dh", secs / (60*60));
+          sprintf(tmp, _TR("%dh", "%dч"), secs / (60*60));
         }
 
         int timestamp_width = display.getTextWidth(tmp);
@@ -1030,7 +1018,7 @@ public:
         display.setCursor(0, y); display.print(tmp); y += line_h;
         snprintf(tmp, sizeof(tmp), "TX:%ddBm", _node_prefs->tx_power_dbm);
         display.setCursor(0, y); display.print(tmp); y += line_h;
-        snprintf(tmp, sizeof(tmp), "Noise:%d", radio_driver.getNoiseFloor());
+        snprintf(tmp, sizeof(tmp), _TR("Noise:%d", "Шум:%d"), radio_driver.getNoiseFloor());
         display.setCursor(0, y); display.print(tmp);
       } else {
         snprintf(tmp, sizeof(tmp), "FQ: %06.3f   SF: %d", _node_prefs->freq, _node_prefs->sf);
@@ -1039,7 +1027,7 @@ public:
         display.setCursor(0, y); display.print(tmp); y += line_h;
         snprintf(tmp, sizeof(tmp), "TX: %ddBm", _node_prefs->tx_power_dbm);
         display.setCursor(0, y); display.print(tmp); y += line_h;
-        snprintf(tmp, sizeof(tmp), "Noise floor: %d", radio_driver.getNoiseFloor());
+        snprintf(tmp, sizeof(tmp), _TR("Noise floor: %d", "Уровень шума: %d"), radio_driver.getNoiseFloor());
         display.setCursor(0, y); display.print(tmp);
       }
 #ifndef WITH_WIFI_SWITCHING
@@ -1066,35 +1054,35 @@ public:
 #ifdef PIN_GPS_SWITCH
       bool hw_gps_state = digitalRead(PIN_GPS_SWITCH);
       if (gps_state != hw_gps_state) {
-        strcpy(buf, gps_state ? "gps off(hw)" : "gps off(sw)");
+        strcpy(buf, gps_state ? _TR("gps off(hw)", "gps выкл(hw)") : _TR("gps off(sw)", "gps выкл(sw)"));
       } else {
-        strcpy(buf, gps_state ? "gps on" : "gps off");
+        strcpy(buf, gps_state ? _TR("gps on", "gps вкл") : _TR("gps off", "gps выкл"));
       }
 #else
-      strcpy(buf, gps_state ? "gps on" : "gps off");
+      strcpy(buf, gps_state ? _TR("gps on", "gps вкл") : _TR("gps off", "gps выкл"));
 #endif
       display.setColor(UIColor::primary_txt);
       display.drawTextLeftAlign(0, y, buf);
       if (nmea == NULL) {
         y += line_h;
-        display.drawTextLeftAlign(0, y, "Can't access GPS");
+        display.drawTextLeftAlign(0, y, _TR("Can't access GPS", "GPS недоступен"));
       } else {
         display.setColor(UIColor::primary_txt);
-        strcpy(buf, nmea->isValid()?"fix":"no fix");
+        strcpy(buf, nmea->isValid() ? _TR("fix", "захват") : _TR("no fix", "нет захв."));
         display.drawTextRightAlign(display.width()-1, y, buf);
         y += line_h;
-        display.drawTextLeftAlign(0, y, "sat");
+        display.drawTextLeftAlign(0, y, _TR("sat", "спут"));
         display.setColor(UIColor::primary_txt);
         sprintf(buf, "%d", nmea->satellitesCount());
         display.drawTextRightAlign(display.width()-1, y, buf);
         y += line_h;
-        display.drawTextLeftAlign(0, y, "pos");
+        display.drawTextLeftAlign(0, y, _TR("pos", "коорд"));
         display.setColor(UIColor::primary_txt);
         sprintf(buf, "%.4f %.4f",
           nmea->getLatitude()/1000000., nmea->getLongitude()/1000000.);
         display.drawTextRightAlign(display.width()-1, y, buf);
         y += line_h;
-        display.drawTextLeftAlign(0, y, "alt");
+        display.drawTextLeftAlign(0, y, _TR("alt", "выс"));
         display.setColor(UIColor::primary_txt);
         sprintf(buf, "%.2f", nmea->getAltitude()/1000.);
         display.drawTextRightAlign(display.width()-1, y, buf);
@@ -1149,45 +1137,45 @@ public:
             }
             case LPP_VOLTAGE:
               r.readVoltage(v);
-              strcpy(name, "Voltage"); sprintf(buf, "%.2f V", v);
+              strcpy(name, _TR("Voltage", "Напряж.")); sprintf(buf, "%.2f V", v);
               break;
             case LPP_CURRENT:
               r.readCurrent(v);
-              strcpy(name, "Current"); sprintf(buf, "%.3f A", v);
+              strcpy(name, _TR("Current", "Ток")); sprintf(buf, "%.3f A", v);
               break;
             case LPP_TEMPERATURE:
               r.readTemperature(v);
-              strcpy(name, "Temp"); sprintf(buf, "%.1f\xb0" "C", v);
+              strcpy(name, _TR("Temp", "Темп.")); sprintf(buf, "%.1f\xb0" "C", v);
               break;
             case LPP_RELATIVE_HUMIDITY:
               r.readRelativeHumidity(v);
-              strcpy(name, "Humidity"); sprintf(buf, "%.1f%%", v);
+              strcpy(name, _TR("Humidity", "Влажн.")); sprintf(buf, "%.1f%%", v);
               break;
             case LPP_BAROMETRIC_PRESSURE:
               r.readPressure(v);
-              strcpy(name, "Pressure"); sprintf(buf, "%.1f hPa", v);
+              strcpy(name, _TR("Pressure", "Давл.")); sprintf(buf, "%.1f hPa", v);
               break;
             case LPP_ALTITUDE:
               r.readAltitude(v);
-              strcpy(name, "Altitude"); sprintf(buf, "%.0f m", v);
+              strcpy(name, _TR("Altitude", "Высота")); sprintf(buf, "%.0f m", v);
               break;
             case LPP_POWER:
               r.readPower(v);
-              strcpy(name, "Power"); sprintf(buf, "%.2f W", v);
+              strcpy(name, _TR("Power", "Мощн.")); sprintf(buf, "%.2f W", v);
               break;
             default:
               r.skipData(type);
-              strcpy(name, "unk"); sprintf(buf, "");
+              strcpy(name, _TR("unk", "неизв")); sprintf(buf, "");
           }
         } else {
           // --- Uptime rows: computed fresh each render, never cached ---
           uint32_t secs;
           if (abs_row == sensors_nb) {
-            strcpy(name, "Uptime(boot)");
+            strcpy(name, _TR("Uptime(boot)", "Работа(старт)"));
             secs = millis() / 1000;
           } else {
             bool usb = _task->isUsbConnected();
-            strcpy(name, usb ? "On charge" : "On batt");
+            strcpy(name, usb ? _TR("On charge", "Зарядка") : _TR("On batt", "От АКБ"));
             secs = _task->usbElapsedSecs();
           }
           formatDuration(buf, sizeof(buf), secs);
@@ -1231,10 +1219,10 @@ public:
 
         if (the_mesh.isWifiConnecting()) {
           display.setColor(UIColor::secondary_txt);
-          display.drawTextCentered(display.width() / 2, content_y + 8, "Connecting...");
+          display.drawTextCentered(display.width() / 2, content_y + 8, _TR("Connecting...", "Подключение..."));
         } else if (_wifi_scanning) {
           display.setColor(UIColor::secondary_txt);
-          display.drawTextCentered(display.width() / 2, content_y + 8, "Scanning WiFi...");
+          display.drawTextCentered(display.width() / 2, content_y + 8, _TR("Scanning WiFi...", "Поиск WiFi..."));
         } else {
           int net_n = _wifi_scan_n >= 0 ? _wifi_scan_n : 0;
           WifiPrefs* wp = the_mesh.getWifiPrefs();
@@ -1300,7 +1288,7 @@ public:
               display.drawTextRightAlign(display.width() - 1, y, rbuf);
             } else if (i == S + N_u)     { display.print("  BLE"); }
             else if (i == S + N_u + 1)   { display.print("  USB"); }
-            else                          { display.print("  Back"); }
+            else                          { display.print(_TR("  Back", "  Назад")); }
           }
         }
         return (_wifi_scanning || the_mesh.isWifiConnecting()) ? 400 : 200;
@@ -1411,6 +1399,7 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (uiOverlayActive()) { uiOverlayInput(c); return true; }
     // Cal ADC confirm screen. Single button: short = next action, long = run
     // it, double = leave. Joystick: arrows pick, ● runs, long ● leaves.
     if (_in_adccal) {
@@ -1581,7 +1570,7 @@ public:
 #endif
 #if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
       if (_page == HomePage::DISCOVERY) {
-        _task->showAlert("Repeater disc", 800);
+        _task->showAlert(_TR("Repeater disc", "Поиск репитеров"), 800);
       }
 #endif
       return true;
@@ -1593,7 +1582,7 @@ public:
 #endif
 #if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
       if (_page == HomePage::DISCOVERY) {
-        _task->showAlert("Repeater disc", 800);
+        _task->showAlert(_TR("Repeater disc", "Поиск репитеров"), 800);
       }
 #endif
       return true;
@@ -1611,9 +1600,9 @@ public:
     if (c == KEY_ENTER && _page == HomePage::ADVERT) {
       _task->notify(UIEventType::ack);
       if (the_mesh.advert()) {
-        _task->showAlert("Advert sent!", 1000);
+        _task->showAlert(_TR("Advert sent!", "Анонс отправлен"), 1000);
       } else {
-        _task->showAlert("Advert failed..", 1000);
+        _task->showAlert(_TR("Advert failed..", "Сбой анонса.."), 1000);
       }
       return true;
     }
@@ -1815,14 +1804,12 @@ public:
       int hdr_line_h = display.getLineH(hdr_size) - 3;
       int msg_start_y = hdr_line_h + 3;
 
-      int body_size = calcDynamicBodySize(display, p->msg, msg_start_y);
-
       char time_str[8];
       int secs = (int)(_rtc->getCurrentTime() - p->timestamp);
       if (secs < 0) secs = 0;
-      if      (secs < 60)   snprintf(time_str, sizeof(time_str), "%ds",  secs);
-      else if (secs < 3600) snprintf(time_str, sizeof(time_str), "%dm",  secs / 60);
-      else                  snprintf(time_str, sizeof(time_str), "%dh",  secs / 3600);
+      if      (secs < 60)   snprintf(time_str, sizeof(time_str), _TR("%ds", "%dс"),  secs);
+      else if (secs < 3600) snprintf(time_str, sizeof(time_str), _TR("%dm", "%dм"),  secs / 60);
+      else                  snprintf(time_str, sizeof(time_str), _TR("%dh", "%dч"),  secs / 3600);
 
       int hdr_ch_w    = 6 * hdr_size;
       int hdr_total   = display.width() / hdr_ch_w;
@@ -1852,7 +1839,7 @@ public:
       display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
       if (!uiDrawMessageContent(display, p->msg, 0, msg_start_y, display.width(), display.height() - msg_start_y)) {
-        display.setTextSize(body_size);
+        display.setTextSize(1);
         display.setCursor(0, msg_start_y);
         display.printWordWrap(p->msg, display.width());
       }
@@ -1868,15 +1855,13 @@ public:
     int hdr_line_h  = display.getLineH(hdr_size) - 3;
     int msg_start_y = hdr_line_h + 3;
 
-    int body_size = calcDynamicBodySize(display, p->msg, msg_start_y);
-
     // 2. Time string
     char time_str[8];
     int secs = (int)(_rtc->getCurrentTime() - p->timestamp);
     if (secs < 0) secs = 0;
-    if      (secs < 60)   snprintf(time_str, sizeof(time_str), "%ds",  secs);
-    else if (secs < 3600) snprintf(time_str, sizeof(time_str), "%dm",  secs / 60);
-    else                  snprintf(time_str, sizeof(time_str), "%dh",  secs / 3600);
+    if      (secs < 60)   snprintf(time_str, sizeof(time_str), _TR("%ds", "%dс"),  secs);
+    else if (secs < 3600) snprintf(time_str, sizeof(time_str), _TR("%dm", "%dм"),  secs / 60);
+    else                  snprintf(time_str, sizeof(time_str), _TR("%dh", "%dч"),  secs / 3600);
 
     // 3. Header left: "#N (D)name" for direct, "#N channel" for group
     int hdr_ch_w    = 6 * hdr_size;
@@ -1908,7 +1893,7 @@ public:
     display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
     if (!uiDrawMessageContent(display, p->msg, 0, msg_start_y, display.width(), display.height() - msg_start_y)) {
-      display.setTextSize(body_size);
+      display.setTextSize(1);
       display.setCursor(0, msg_start_y);
       display.printWordWrap(p->msg, display.width());
     }
@@ -2532,7 +2517,7 @@ void UITask::toggleGPS() {
           notify(UIEventType::ack);
         }
         the_mesh.savePrefs();
-        showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
+        showAlert(_node_prefs->gps_enabled ? _TR("GPS: Enabled", "GPS: Включен") : _TR("GPS: Disabled", "GPS: Выключен"), 800);
         _next_refresh = 0;
         break;
       }
@@ -2551,7 +2536,7 @@ void UITask::toggleBuzzer() {
     }
     _node_prefs->buzzer_quiet = buzzer.isQuiet();
     the_mesh.savePrefs();
-    showAlert(buzzer.isQuiet() ? "Buzzer: OFF" : "Buzzer: ON", 800);
+    showAlert(buzzer.isQuiet() ? _TR("Buzzer: OFF", "Зуммер: ВЫКЛ") : _TR("Buzzer: ON", "Зуммер: ВКЛ"), 800);
     _next_refresh = 0;  // trigger refresh
   #endif
 }

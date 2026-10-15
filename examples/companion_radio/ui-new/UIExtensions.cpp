@@ -5,6 +5,19 @@ __attribute__((weak)) int uiExtraSettings(const UIExtraSetting** items) {
   return 0;
 }
 
+__attribute__((weak)) bool uiOverlayActive() {
+  return false;
+}
+
+__attribute__((weak)) int uiOverlayRender(DisplayDriver& d) {
+  (void)d;
+  return 1000;
+}
+
+__attribute__((weak)) void uiOverlayInput(char key) {
+  (void)key;
+}
+
 __attribute__((weak)) void uiBegin(DisplayDriver& d, NodePrefs* prefs) {
   (void)d;
   (void)prefs;
