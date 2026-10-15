@@ -14,16 +14,18 @@
   #define AUTO_SHUTDOWN_PERCENT  0
 #endif
 
+#include "UILang.h"
+
 #ifndef POWER_ON_HINT
-  #define POWER_ON_HINT "Press RST to turn on"
+  #define POWER_ON_HINT _TR("Press RST to turn on", "Нажмите RST")
 #endif
 // After a low-battery stop: boards with nRF52 power management wake by
 // themselves when USB power comes (see NRF52Board::configureVoltageWake).
 #ifndef CHARGE_HINT
   #if defined(NRF52_POWER_MANAGEMENT)
-    #define CHARGE_HINT "Plug in USB to turn on"
+    #define CHARGE_HINT _TR("Plug in USB to turn on", "Подключите USB")
   #else
-    #define CHARGE_HINT "Charge, then press RST"
+    #define CHARGE_HINT _TR("Charge, then press RST", "Зарядите, затем RST")
   #endif
 #endif
 
@@ -35,7 +37,7 @@ void drawBoot(DisplayDriver* d) {
 #ifdef ST7789
   d->setTextSize(2);
 #endif
-  d->drawTextCentered(d->width() / 2, 28, "Loading...");
+  d->drawTextCentered(d->width() / 2, 28, _TR("Loading...", "Загрузка..."));
   d->endFrame();
 }
 
@@ -52,9 +54,9 @@ void drawPowerOff(DisplayDriver* d, bool low_battery) {
   d->startFrame();
   d->setColor(UIColor::primary_txt);
   d->setTextSize(1);
-  if (low_battery) { d->drawTextCentered(d->width() / 2, y, "Low battery"); y += lh + 2; }
+  if (low_battery) { d->drawTextCentered(d->width() / 2, y, _TR("Low battery", "Низкий заряд")); y += lh + 2; }
   d->setTextSize(big);
-  d->drawTextCentered(d->width() / 2, y, "Turned off");
+  d->drawTextCentered(d->width() / 2, y, _TR("Turned off", "Выключен"));
   y += bh + 4;
   d->setTextSize(1);
   d->drawTextCentered(d->width() / 2, y, hint);

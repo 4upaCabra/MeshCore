@@ -752,7 +752,7 @@ public:
     char buf[32];
     display.setTextSize(sz);
     display.setColor(UIColor::primary_txt);
-    display.drawTextCentered(cx, y, "Cal ADC");
+    display.drawTextCentered(cx, y, _TR("Cal ADC", "Калибр. АКБ"));
     y += lh;
     snprintf(buf, sizeof(buf), "%u.%02uV>%u.%02uV%s",
              c.mv / 1000, (c.mv % 1000) / 10, c.target_mv / 1000, (c.target_mv % 1000) / 10,
@@ -764,7 +764,7 @@ public:
     y += lh;
     const char* note = c.statusText();
     if (!note && AdcCalibration::usbKnown() && !c.target_ina && !board.isExternalPowered())
-      note = "No USB power";
+      note = _TR("No USB power", "Нет питания USB");
     if (note) {
       display.setColor(UIColor::warning_txt);
       display.drawTextCentered(cx, y, note);
@@ -1425,9 +1425,9 @@ public:
         if (_node_prefs) {
           AdcCalibration::Result r = _adccal.run(board, *_node_prefs);
           if (r == AdcCalibration::APPLIED || r == AdcCalibration::RESTORED) the_mesh.savePrefs();
-          if (r == AdcCalibration::APPLIED)        _task->showAlert("ADC calibrated", 1500);
-          else if (r == AdcCalibration::RESTORED)  _task->showAlert("ADC default", 1500);
-          else if (r == AdcCalibration::NO_EFFECT) _task->showAlert("ADC: no effect", 1500);
+          if (r == AdcCalibration::APPLIED)        _task->showAlert(_TR("ADC calibrated", "АКБ откалибр."), 1500);
+          else if (r == AdcCalibration::RESTORED)  _task->showAlert(_TR("ADC default", "АКБ сброшен"), 1500);
+          else if (r == AdcCalibration::NO_EFFECT) _task->showAlert(_TR("ADC: no effect", "АКБ: без изм."), 1500);
         }
       }
       return true;

@@ -4,6 +4,7 @@
 #include <MeshCore.h>
 #include <helpers/BatteryPack.h>
 #include <helpers/NodePrefs.h>
+#include "UILang.h"
 
 // Battery-ADC calibration from the device menu (Settings → Cal ADC).
 //
@@ -94,19 +95,21 @@ struct AdcCalibration {
     } while (sel == APPLY && !canApply());
   }
 
+#define _TR_ADC(en, ru) _TR(en, ru)
+
   static const char* actionName(uint8_t a) {
     switch (a) {
-      case APPLY: return "Apply";
-      case RESET: return "Default";
-      default:    return "Cancel";
+      case APPLY: return _TR_ADC("Apply", "Применить");
+      case RESET: return _TR_ADC("Default", "Сброс");
+      default:    return _TR_ADC("Cancel", "Отмена");
     }
   }
 
   const char* statusText() const {
     switch (status) {
-      case NO_READING:   return "No reading";
-      case UNSTABLE:     return "Unstable, no batt?";
-      case OUT_OF_RANGE: return "Out of range";
+      case NO_READING:   return _TR_ADC("No reading", "Нет данных");
+      case UNSTABLE:     return _TR_ADC("Unstable, no batt?", "Нестабильно");
+      case OUT_OF_RANGE: return _TR_ADC("Out of range", "Вне диапазона");
       default:           return nullptr;
     }
   }
