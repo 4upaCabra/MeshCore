@@ -425,6 +425,7 @@ static void esp32_setupPower() {
 #endif
 
 void setup() {
+  board.feedWatchdog();   // a soft reset leaves a started watchdog running
   Serial.begin(115200);
   board.begin();
 
@@ -594,6 +595,7 @@ void setup() {
 }
 
 void loop() {
+  board.feedWatchdog();
   the_mesh.loop();
   interface_manager.loop();
   sensors.loop();

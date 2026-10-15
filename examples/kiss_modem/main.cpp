@@ -76,6 +76,7 @@ void onGetStats(uint32_t* rx, uint32_t* tx, uint32_t* errors) {
 }
 
 void setup() {
+  board.feedWatchdog();   // a soft reset leaves a started watchdog running
   board.begin();
 
   if (!radio_init()) {
@@ -130,6 +131,7 @@ void setup() {
 }
 
 void loop() {
+  board.feedWatchdog();
   modem->loop();
 
   if (!modem->isActuallyTransmitting() && !modem->isHostOutputBackedUp()) {

@@ -46,9 +46,7 @@ static unsigned long startup_millis = 0;
 #endif
 
 void setup() {
-  #if defined(NRF52_PLATFORM)
-    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
-  #endif
+  board.feedWatchdog();
 
   Serial.begin(115200);
   delay(500);
@@ -58,17 +56,13 @@ void setup() {
 #ifdef HAS_EXTERNAL_WATCHDOG
   external_watchdog.begin();
 #endif
-  #if defined(NRF52_PLATFORM)
-    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
-  #endif
+  board.feedWatchdog();
 
 #if defined(MESH_DEBUG) && defined(NRF52_PLATFORM)
   // give some extra time for serial to settle so
   // boot debug messages can be seen on terminal
   delay(1500);
-  #if defined(NRF52_PLATFORM)
-    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
-  #endif
+  board.feedWatchdog();
 #endif
 
 #ifdef DISPLAY_CLASS
@@ -80,18 +74,14 @@ void setup() {
   }
 #endif
 
-  #if defined(NRF52_PLATFORM)
-    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
-  #endif
+  board.feedWatchdog();
 
   if (!radio_init()) {
     MESH_DEBUG_PRINTLN("Radio init failed!");
     halt();
   }
 
-  #if defined(NRF52_PLATFORM)
-    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
-  #endif
+  board.feedWatchdog();
 
   fast_rng.begin(radio_driver.getRngSeed());
 
@@ -261,9 +251,7 @@ void loop() {
 #endif
 
   // Reload hardware WDT
-  #if defined(NRF52_PLATFORM)
-    NRF_WDT->RR[0] = WDT_RR_RR_Reload;
-  #endif
+  board.feedWatchdog();
 
   if (the_mesh.getNodePrefs()->powersaving_enabled && !the_mesh.hasPendingWork()) {
 #if defined(NRF52_PLATFORM)

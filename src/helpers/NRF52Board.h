@@ -56,6 +56,11 @@ public:
 #endif
   NRF52Board(char *otaname) : ota_name(otaname) {}
   virtual void begin();
+  // A board may start the nRF52 watchdog in begin(); a soft reset (reboot,
+  // return from DFU) leaves it running, so this also matters before begin().
+  void feedWatchdog() override {
+    if (NRF_WDT->RUNSTATUS & WDT_RUNSTATUS_RUNSTATUS_Msk) NRF_WDT->RR[0] = WDT_RR_RR_Reload;
+  }
   virtual uint8_t getStartupReason() const override { return startup_reason; }
   virtual float getMCUTemperature() override;
   virtual void reboot() override { NVIC_SystemReset(); }

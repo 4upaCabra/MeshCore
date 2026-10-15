@@ -566,6 +566,7 @@ void halt() {
 }
 
 void setup() {
+  board.feedWatchdog();   // a soft reset leaves a started watchdog running
   Serial.begin(115200);
 
   board.begin();
@@ -603,6 +604,7 @@ void setup() {
 }
 
 void loop() {
+  board.feedWatchdog();
   the_mesh.loop();
   rtc_clock.tick();
 #ifdef HAS_EXTERNAL_WATCHDOG

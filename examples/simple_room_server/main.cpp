@@ -34,6 +34,7 @@ static char ethernet_command[MAX_POST_TEXT_LEN+1];
 #endif
 
 void setup() {
+  board.feedWatchdog();   // a soft reset leaves a started watchdog running
   Serial.begin(115200);
   delay(1000);
 
@@ -115,6 +116,7 @@ void setup() {
 }
 
 void loop() {
+  board.feedWatchdog();
 #if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
   // Note CLI bytes before the read loop below consumes them.
   if (Serial.available()) auto_sleep.noteSerial();

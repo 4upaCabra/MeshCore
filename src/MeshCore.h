@@ -65,6 +65,9 @@ public:
   virtual void onBootComplete() { /* no op */ }
   virtual uint32_t getIRQGpio() { return -1; } // not supported. Returns DIO1 (SX1262) and DIO0 (SX127x)
   virtual void sleep(uint32_t secs)  { /* no op */ }
+  // Keep a hardware watchdog from resetting the node: every role calls this at
+  // the start of setup() and on each loop(). No-op where no watchdog runs.
+  virtual void feedWatchdog() { }
   virtual uint32_t getGpio() { return 0; }
   virtual void setGpio(uint32_t values) {}
   virtual uint8_t getStartupReason() const = 0;

@@ -53,6 +53,7 @@ void halt() {
 static char command[160];
 
 void setup() {
+  board.feedWatchdog();   // a soft reset leaves a started watchdog running
   Serial.begin(115200);
   delay(1000);
 
@@ -121,6 +122,7 @@ void setup() {
 }
 
 void loop() {
+  board.feedWatchdog();
   int len = strlen(command);
   // `command` must stay NUL-terminated within its bounds. If it ever isn't,
   // strlen() above can return >= sizeof(command) and the loop below would then
