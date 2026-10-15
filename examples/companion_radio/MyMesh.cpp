@@ -3984,6 +3984,7 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     snprintf(buf, 512,
       "System & Timesync:\n"
       "pin - show CLI/BLE PIN; get/set ble.pin <0|PIN>\n"
+      "get/set ble.prefix [on|off]\n"
       "timesync [on|off|adverts on/off|msgs on/off|reset|params]\n"
       "set timesync.<cluster|drift|jump|back|age|quiet> <s>\n"
       "clock / time - RTC status\n"
@@ -4017,7 +4018,7 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     snprintf(buf, 512,
       "Full command list:\n"
       "Radio: get/set radio, txdelay, rxdelay, airtime\n"
-      "Sys: pin, get/set ble.pin, timesync [on|off|params], clock, reboot, poweroff, neighbors, stats, ver, board\n"
+      "Sys: pin, get/set ble.pin|ble.prefix, timesync [on|off|params], clock, reboot, poweroff, neighbors, stats, ver, board\n"
       "App: get/set remote.cli|terminal.cli|cyr2lat.channels|contacts"
 #ifdef WITH_MCOTXT
       ", mcotxt"
@@ -4060,6 +4061,21 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
         snprintf(buf, 512, "ble.pin: %06lu (reboot to apply)", (unsigned long)pin);
     } else {
       strcpy(buf, "ERR: pin must be 0 (auto/random) or 100000-999999");
+    }
+
+  } else if (strcmp(cmd, "get ble.prefix") == 0) {
+    // What the next boot will advertise; a prefs file without the key keeps the prefix.
+    snprintf(buf, 512, "ble.prefix: %s", blePrefixEnabled(&_prefs) ? "on" : "off");
+  } else if (strncmp(cmd, "set ble.prefix ", 15) == 0) {
+    const char* val = cmd + 15;
+    if (strcmp(val, "on") == 0 || strcmp(val, "off") == 0) {
+      bool on = strcmp(val, "on") == 0;
+      _prefs.ui_ble_prefix = on ? BLE_PREFIX_ON : BLE_PREFIX_OFF;
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+      // The name goes to the BLE stack once at begin(): nothing renames a live advertisement.
+      snprintf(buf, 512, "ble.prefix: %s (reboot to apply)", on ? "on" : "off");
+    } else {
+      strcpy(buf, "ERR: use on or off");
     }
 
   } else if (strcmp(cmd, "get tz.offset") == 0) {
@@ -5104,7 +5120,7 @@ void MyMesh::initCommsFromPrefs() {
       // auto mode: new random each boot, not persisted
     }
   }
-  _ble_iface.begin(BLE_NAME_PREFIX, _prefs.node_name, _active_ble_pin);
+  _ble_iface.begin(blePrefixEnabled(&_prefs) ? BLE_NAME_PREFIX : "", _prefs.node_name, _active_ble_pin);
   if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI && _wifi_prefs.network_count > 0) {
     // Start async WiFi; use BLE as fallback during connection
     _wifi_net_idx = 0;

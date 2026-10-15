@@ -125,6 +125,7 @@ public:
   uint8_t  framed_packets_enabled = 1; // 0 = never fragment long companion frames
   int8_t   tz_offset = 0;
   uint8_t  ui_lang = 0;   // 0 = EN (default), 1 = RU
+  uint8_t  ui_ble_prefix = 0;   // BLE_PREFIX_*: whether the BLE name starts with BLE_NAME_PREFIX
 
 private:
   class RadioPrefs : public ConfigSerializer {
@@ -265,6 +266,7 @@ private:
       def("mcoimg_det_off", _parent->ui_mcoimg_detect_off);
       def("framed_pkt", _parent->framed_packets_enabled);
       def("lang", _parent->ui_lang);
+      def("ble_prefix", _parent->ui_ble_prefix);
     }
   public:
     UIPrefs(NodePrefs* parent) : _parent(parent) { }
@@ -328,3 +330,13 @@ public:
   bool isRepeatEn() const { return disable_fwd == 0; }
   void setRepeatEn(bool en) { disable_fwd = en ? 0 : 1; }
 };
+
+// BLE name: "MeshCore-<node name>" or bare "<node name>". Several nodes in one
+// place otherwise show up as identical "MeshCore-" entries. Keeping the prefix
+// stays the default (a prefs file without the key reads 0 = unset = on). Takes
+// effect at boot: the name is handed to the BLE stack once in begin().
+enum { BLE_PREFIX_UNSET = 0, BLE_PREFIX_ON = 1, BLE_PREFIX_OFF = 2 };
+
+static inline bool blePrefixEnabled(const NodePrefs* prefs) {
+  return prefs == NULL || prefs->ui_ble_prefix != BLE_PREFIX_OFF;
+}

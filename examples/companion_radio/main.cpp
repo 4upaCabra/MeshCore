@@ -509,7 +509,8 @@ void setup() {
 
 // add bluetooth interface
 #if defined(BLE_PIN_CODE) && !defined(WITH_WIFI_SWITCHING)
-  bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+  bluetooth_interface.begin(blePrefixEnabled(the_mesh.getNodePrefs()) ? BLE_NAME_PREFIX : "",
+                            the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
   interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
 #endif
 
