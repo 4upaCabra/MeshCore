@@ -204,7 +204,9 @@ class HomeScreen : public UIScreen {
   int _clock_pm_pending;   // PMs queued for inline display on CLOCK page
   AdvertPath recent[ADVERT_PATH_TABLE_SIZE];
 #if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
-  DiscoveredNode discovered[UI_RECENT_LIST_SIZE];
+  DiscoveredNode discovered[UI_RECENT_LIST_SIZE]; // not circular, latest discovered nodes are not kept
+  uint32_t disc_node_req_tag = 0;
+  uint32_t disc_nodes_count = 0;
   uint32_t discovery_req_time = 0;
   bool discovery_disp_names = true; // by default display names if available (removes SNR_O)
 #endif
@@ -321,6 +323,41 @@ public:
   bool isOnClockPage() const { return _page == CLOCK; }
   void incrementClockPM() { _clock_pm_pending++; }
   int  getPmClockMode()  const { return _pm_clock_mode; }
+
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  bool sendDiscoverRequest() {
+    uint8_t cmd_bytes[6];
+    cmd_bytes[0] = CTL_TYPE_NODE_DISCOVER_REQ | 1; // DISCOVER_REQ | prefix only
+    cmd_bytes[1] = 0xFF;     // Repeaters
+    the_mesh.getRNG()->random((uint8_t *) &disc_node_req_tag, 4);  // generate random tag
+    memcpy(&cmd_bytes[2], &disc_node_req_tag, 4);
+    disc_nodes_count = 0;
+    mesh::Packet* req = the_mesh.createControlData(cmd_bytes, sizeof(cmd_bytes));
+    if (req) {
+      the_mesh.sendZeroHop(req);
+      return true;
+    }
+    return false;
+  }
+
+  void handleDiscoverResponse(const mesh::Packet* packet) {
+    if (disc_nodes_count < UI_RECENT_LIST_SIZE && memcmp(&packet->payload[2], &disc_node_req_tag, 4) == 0) {
+      auto d = &discovered[disc_nodes_count++];
+      memcpy(d->pubkey_prefix, &packet->payload[6], 8);
+      d->pubkey_prefix[8] = 0;
+      d->type = packet->payload[0] & 0xF;
+      d->snr_out = ((int8_t)packet->payload[1]) / 4.0f;
+      d->snr_in = radio_driver.getLastSNR();
+      ContactInfo* c = the_mesh.lookupContactByPubKey(&packet->payload[6], 8);
+      if (c != NULL) {
+        strncpy(d->name, c->name, sizeof(d->name) - 1);
+        d->name[sizeof(d->name) - 1] = 0;
+      } else {
+        d->name[0] = 0;
+      }
+    }
+  }
+#endif
 
   void poll() override {
     if (_shutdown_init && !_task->isButtonPressed()) {  // must wait for USR button to be released
@@ -1338,7 +1375,7 @@ public:
       }
 #if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
     } else if (_page == HomePage::DISCOVERY) {
-      int count = the_mesh.getDiscoveredNodes(discovered, UI_RECENT_LIST_SIZE);
+      int count = (int)disc_nodes_count;
       display.setColor(UIColor::primary_txt);
       display.setTextSize(hdr_size);
       int y = content_y;
@@ -1639,8 +1676,7 @@ public:
 #if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
     if (c == KEY_ENTER && _page == HomePage::DISCOVERY) {
       if (millis() > discovery_req_time + 5000) { // rate limiter
-        the_mesh.requestRepeatersDiscovery();
-        discovery_req_time = millis();
+        if (sendDiscoverRequest()) discovery_req_time = millis();
       }
       return true;
     }
@@ -2135,6 +2171,14 @@ void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_det
 
 void UITask::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
   if (!hasConnection()) notify(UIEventType::newContactMessage);
+}
+
+void UITask::onControlDataRecv(const mesh::Packet* packet) {
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  if (packet->payload_len >= 14 && (packet->payload[0] & 0xF0) == CTL_TYPE_NODE_DISCOVER_RESP) {
+    ((HomeScreen *) home)->handleDiscoverResponse(packet);
+  }
+#endif
 }
 
 void UITask::onQueueSizeChanged(int msgcount) {

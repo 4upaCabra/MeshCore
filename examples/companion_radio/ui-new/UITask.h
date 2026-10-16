@@ -22,6 +22,17 @@
 #include "../AbstractUITask.h"
 #include "../NodePrefs.h"
 
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+// A node that answered the "discover repeaters" request (home screen page).
+struct DiscoveredNode {
+  uint8_t pubkey_prefix[9];
+  float snr_in;
+  float snr_out;
+  char name[32];
+  uint8_t type;
+};
+#endif
+
 class UITask : public AbstractUITask {
   DisplayDriver* _display;
   SensorManager* _sensors;
@@ -135,6 +146,7 @@ public:
   void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) override;
   void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) override;
   void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) override;
+  void onControlDataRecv(const mesh::Packet* pkt) override;
   void onQueueSizeChanged(int msgcount) override;
   void onShowMessage(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm) override;
   void onStatusChanged() override { notify(); }
