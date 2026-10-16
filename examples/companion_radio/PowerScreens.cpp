@@ -31,6 +31,16 @@
 
 namespace power_screens {
 
+// The UIColor values live in the display drivers: a build without a display
+// links none of them, and on targets that keep unused functions (ESP32-C3)
+// these screens would not link. Without a display there is nothing to draw.
+#ifndef DISPLAY_CLASS
+
+void drawBoot(DisplayDriver*) {}
+void drawPowerOff(DisplayDriver*, bool) {}
+
+#else
+
 void drawBoot(DisplayDriver* d) {
   if (!d) return;
   d->startFrame();
@@ -67,6 +77,8 @@ void drawPowerOff(DisplayDriver* d, bool low_battery) {
     delay(3000);                    // a lit screen goes dark with the node
   }
 }
+
+#endif  // DISPLAY_CLASS
 
 bool batteryFlat(uint16_t mv, bool external_power) {
   if (external_power || mv < 2500) return false;
