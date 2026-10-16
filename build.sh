@@ -211,11 +211,12 @@ build_repeater_firmwares() {
 
 }
 
-# single companion (ble) images that do not fit their app partition:
-# their boards fall back to the separate USB image.
+# companion images that do not fit their app partition: a skipped ble image
+# falls back to the board's separate USB image, a skipped usb one is left out.
 COMPANION_RELEASE_SKIP=(
   "LilyGo_TBeam_1W_companion_radio_ble"
   "LilyGo_TLora_V2_1_1_6_companion_radio_ble"
+  "wio-e5-mini_companion_radio_usb"   # 256 KB flash, 3.7 KB over
 )
 
 # _ble envs that carry USB too (and WiFi where it fits), the transport chosen at
