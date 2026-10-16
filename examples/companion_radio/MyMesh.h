@@ -743,6 +743,7 @@ private:
     uint32_t last_ts;       // newest accepted command timestamp (sender clock)
     uint32_t lock_until;    // millis(); 0 = not locked
     uint32_t seen;          // millis() of the last use, for eviction
+    uint32_t session_until; // millis(); PIN session of the CLI screen, 0 = none
     uint8_t  bad;           // wrong PINs in a row
   };
   RemoteCliPeer          _rcli_peers[8] = {};

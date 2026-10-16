@@ -138,6 +138,12 @@ static void normalizeCliCommand(char* buf);
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+
+// Remote CLI (see rcliCheckPin)
+#define RCLI_MAX_BAD     5                 // wrong PINs in a row before a lock
+#define RCLI_LOCK_MS     (10UL * 60 * 1000)
+#define RCLI_MAX_SKEW    (15UL * 60)       // seconds, checked only when our clock is reliable
+#define RCLI_SESSION_MS  (10UL * 60 * 1000) // CLI screen: commands without the PIN after one with it
 #define LAZY_PREFS_WRITE_DELAY          2000
 #define APP_DRAIN_GRACE_MILLIS          3000
 
@@ -1501,17 +1507,38 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
                               const char *text, char* reply) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
 #ifdef WITH_COMPANION_CLI
-  const char* cmd = text;
+  // The app's CLI screen numbers its commands, "01|get radio", and matches the
+  // reply by the same prefix.
+  char prefix[4] = {0};
+  const char* body = text;
+  if (strlen(text) > 4 && text[2] == '|') {
+    memcpy(prefix, text, 3);
+    body = text + 3;
+  }
+  const char* cmd = body;
   bool allowed = false;
   const uint8_t mode = _prefs.rcli_mode;
   if (mode == REMOTE_CLI_PIN || mode == REMOTE_CLI_BOTH) {
-    int r = rcliCheckPin(from, text, sender_timestamp, &cmd);
+    int r = rcliCheckPin(from, body, sender_timestamp, &cmd);
     if (r < 0) return;   // no reply: replayed, stale or locked out
-    if (r > 0) { allowed = true; rcliAccepted(from); }
+    RemoteCliPeer* p = rcliPeer(from);
+    if (r > 0) {
+      allowed = true;
+      rcliAccepted(from);
+    } else if (p->session_until && (int32_t)(millis() - p->session_until) < 0) {
+      // A command with the PIN opened a session: the next ones may omit it.
+      // Only here - in a chat every message would turn into a command.
+      if (!rcliFresh(p, sender_timestamp)) return;
+      allowed = true;
+    }
+    if (allowed) {
+      p->session_until = millis() + RCLI_SESSION_MS;
+      if (!p->session_until) p->session_until = 1;
+    }
   }
   if (!allowed && (mode == REMOTE_CLI_FLAG || mode == REMOTE_CLI_BOTH) && from.isRemoteCLIAllowed()) {
     if (!rcliFresh(rcliPeer(from), sender_timestamp)) return;
-    cmd = text;
+    cmd = body;
     allowed = true;
   }
   if (allowed) {
@@ -1523,12 +1550,12 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
     normalizeCliCommand(cmdBuf);
 
     if (strcmp(cmdBuf, "reboot") == 0) {
-      strcpy(reply, "rebooting in 1s...");
+      sprintf(reply, "%srebooting in 1s...", prefix);
       _pending_reboot_at = futureMillis(1000);
       _pending_reboot_deadline = futureMillis(30000);
       _app_drain_until = 0;
     } else if (strcmp(cmdBuf, "poweroff") == 0 || strcmp(cmdBuf, "shutdown") == 0) {
-      strcpy(reply, "powering off...");
+      sprintf(reply, "%spowering off...", prefix);
       _pending_poweroff_at = futureMillis(500);
       _pending_poweroff_deadline = futureMillis(30000);
       _app_drain_until = 0;
@@ -1538,13 +1565,18 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
       // their own and cut the reply to fit.
       static char out[512];
       out[0] = 0;
-      if (!handleCliCmd(sender_timestamp, cmdBuf, out, true)) {
+      if (strcmp(cmdBuf, "logout") == 0) {
+        rcliPeer(from)->session_until = 0;
+        strcpy(out, "OK - logged out");
+      } else if (!handleCliCmd(sender_timestamp, cmdBuf, out, true)) {
         if (_cli) _cli->handleCommand(sender_timestamp, cmdBuf, out);
         else strcpy(out, "Unknown command");
       }
-      const size_t cap = 160;
-      if (strlen(out) > cap) { memcpy(reply, out, cap - 3); strcpy(reply + cap - 3, "..."); }
-      else strcpy(reply, out);
+      strcpy(reply, prefix);
+      char* r = reply + strlen(prefix);
+      const size_t cap = 160 - strlen(prefix);
+      if (strlen(out) > cap) { memcpy(r, out, cap - 3); strcpy(r + cap - 3, "..."); }
+      else strcpy(r, out);
     }
     return;
   }
@@ -4648,10 +4680,6 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   return true;
 }
 
-
-#define RCLI_MAX_BAD     5                 // wrong PINs in a row before a lock
-#define RCLI_LOCK_MS     (10UL * 60 * 1000)
-#define RCLI_MAX_SKEW    (15UL * 60)       // seconds, checked only when our clock is reliable
 
 // The PIN is a hash of the private key and a random salt, made once and kept in
 // prefs: it says nothing about the key and can be replaced (CLI, menu).
