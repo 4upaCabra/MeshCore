@@ -520,7 +520,9 @@ void SensorMesh::handleCommand(ClientInfo* from, uint32_t sender_timestamp, char
     sprintf(reply, "%x", board.getGpio());
   } else if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
     strcpy(reply, "setperm, get acl, io");
-    _cli.appendCommonHelp(reply, 155);
+    // The role's commands and the common list do not fit one reply packet
+    // together: the common list comes on its own, with any `help <word>`.
+    strcat(reply, "\nmore: help all");
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
