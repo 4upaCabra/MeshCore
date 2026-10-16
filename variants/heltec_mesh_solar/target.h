@@ -15,6 +15,9 @@
 #include <RadioLib.h>
 #include <helpers/radiolib/RadioLibWrappers.h>
 #include <MeshSolarBoard.h>
+// The meshsolar library's logger.h defines NONE/ERROR/... as plain macros;
+// NONE then breaks InterfaceType::NONE in helpers/MultiSerialInterface.h.
+#undef NONE
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/SensorManager.h>
