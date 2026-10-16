@@ -189,7 +189,9 @@ class HomeScreen : public UIScreen {
     DISCOVERY,
 #endif
     SETTINGS,
+#ifndef UI_NO_HIBERNATE
     SHUTDOWN,
+#endif
     Count    // keep as last
   };
 
@@ -1367,6 +1369,7 @@ public:
         display.drawTextCentered(display.width() / 2, display.height() - display.getLineH(hdr_size) + 1, UI_DISCOVER_HINT);
       }
 #endif
+#ifndef UI_NO_HIBERNATE   // boards without a hibernate screen (Wio Tracker L1)
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(UIColor::primary_txt);
       display.setTextSize(hdr_size);
@@ -1393,6 +1396,7 @@ public:
           display.print(UI_HIBERNATE_LABEL);
         }
       }
+#endif
     }
     if (_page == HomePage::SETTINGS && _in_settings && _pin_show_until) {
       unsigned long now = millis();
@@ -1645,10 +1649,12 @@ public:
       return true;
     }
 #endif
+#ifndef UI_NO_HIBERNATE
     if (c == HIBERNATE_KEY && _page == HomePage::SHUTDOWN) {
       _shutdown_init = true;  // need to wait for button to be released
       return true;
     }
+#endif
     if (c == KEY_ENTER && _page == HomePage::FIRST) {
       if (_task->getUnreadMsgCount() > 0) {
         _task->gotoMsgPreview();
