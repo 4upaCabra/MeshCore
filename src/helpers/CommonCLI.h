@@ -7,6 +7,8 @@
 #include <helpers/ClientACL.h>
 #include <helpers/RegionMap.h>
 #include <helpers/ConfigSerializer.h>
+#include <helpers/CommonRadioPrefs.h>
+#include <helpers/DynamicConfigSerializer.h>
 
 #if defined(WITH_RS232_BRIDGE) || defined(WITH_ESPNOW_BRIDGE)
 #define WITH_BRIDGE

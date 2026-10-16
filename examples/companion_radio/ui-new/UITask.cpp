@@ -2111,7 +2111,21 @@ switch(t){
 }
 
 
-void UITask::msgRead(int msgcount) {
+void UITask::onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) {
+  // we only want to alert on text messages, not cli data
+  if (!(txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN)) return;
+  if (!hasConnection()) notify(UIEventType::contactMessage);
+}
+
+void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) {
+  if (!hasConnection()) notify(UIEventType::channelMessage);
+}
+
+void UITask::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  if (!hasConnection()) notify(UIEventType::newContactMessage);
+}
+
+void UITask::onQueueSizeChanged(int msgcount) {
   _msgcount = msgcount;
   if (msgcount != 0) return;
   // Queue emptied (the app has taken the messages). A preview that has only just
@@ -2126,7 +2140,7 @@ void UITask::msgRead(int msgcount) {
   }
 }
 
-void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm) {
+void UITask::onShowMessage(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm) {
   _msgcount = msgcount;
   _preview_shown_at = millis();
   _preview_close_at = 0;

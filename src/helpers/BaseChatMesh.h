@@ -9,7 +9,7 @@
 
 #include "ContactInfo.h"
 
-#define MAX_SEARCH_RESULTS   8
+#define MAX_SEARCH_RESULTS   24
 
 #define MSG_SEND_FAILED       0
 #define MSG_SEND_SENT_FLOOD   1
@@ -158,9 +158,6 @@ public:
   mesh::Packet* createSelfAdvert(const char* name, double lat, double lon);
   int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack, uint32_t& est_timeout);
   int  sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, uint8_t txt_type, const char* text, uint32_t& est_timeout);
-  int  sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& est_timeout) {
-    return sendCommandData(recipient, timestamp, attempt, TXT_TYPE_CLI_DATA, text, est_timeout);
-  }
   bool sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name, const char* text, int text_len);
   bool sendGroupData(mesh::GroupChannel& channel, uint8_t* path, uint8_t path_len, uint16_t data_type, const uint8_t* data, int data_len);
   int  sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout);

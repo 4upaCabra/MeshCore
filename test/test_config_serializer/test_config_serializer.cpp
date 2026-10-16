@@ -1,14 +1,8 @@
-#include <gtest/gtest.h>
 #include <string>
+#include <gtest/gtest.h>
 #include "helpers/ConfigSerializer.h"
-
-class NativeFileSystem {
-public:
-    void mkdir(const char*) { }
-};
-#define FILESYSTEM NativeFileSystem
+#include "helpers/DynamicConfigSerializer.h"
 #include "helpers/CommonCLI.h"
-#undef FILESYSTEM
 
 #define TEST_INT_S  "56"
 #define TEST_INT     56
@@ -191,6 +185,132 @@ TEST(ConfigSerializer, LoadSerial_IgnoreUnknowns) {
     EXPECT_EQ(1, data.flags);   // flags should be unmodified
     bool match = strcmp("Scott", data.name) == 0;
     EXPECT_TRUE(match);
+}
+
+class TestNested : public ConfigSerializer {
+    class Inner : public ConfigSerializer {
+      protected:
+        void structure() override { }   // no properties, so it writes as '{}'
+    };
+    Inner inner;
+  protected:
+    void structure() override {
+        def("age", age);
+        def("inner", inner);
+        def("name", name, sizeof(name));   // comes *after* the empty sub-object
+    }
+  public:
+    int32_t age;
+    char    name[16];
+};
+
+TEST(ConfigSerializer, LoadSerial_EmptyObject) {
+    MockInputStream s("{age:" TEST_INT_S ",inner:{},name:\"Scott\"}");
+    TestNested data;
+    data.name[0] = 0;
+
+    bool success = data.loadSerial(s);
+    EXPECT_TRUE(success);
+
+    EXPECT_EQ(TEST_INT, data.age);
+    bool match = strcmp("Scott", data.name) == 0;
+    EXPECT_TRUE(match);   // properties after an empty object must still load
+}
+
+TEST(ConfigSerializer, LoadSerial_EmptyObjectWithWhitespace) {
+    MockInputStream s("{age:" TEST_INT_S ",inner:{  },name:\"Scott\"}");
+    TestNested data;
+    data.name[0] = 0;
+
+    bool success = data.loadSerial(s);
+    EXPECT_TRUE(success);
+    bool match = strcmp("Scott", data.name) == 0;
+    EXPECT_TRUE(match);
+}
+
+TEST(DynamicConfigSerializer, GetSet_Basic) {
+    DynamicConfigSerializer data;
+
+    bool s1 = data.setByKey("age", "11");
+    bool s2 = data.setByKey("name", "Scott");
+    EXPECT_TRUE(s1 && s2);
+
+    char tmp[32];
+    bool g1 = data.getByKey("age", tmp, 31);
+    EXPECT_TRUE(g1);
+    EXPECT_STREQ("11", tmp);
+
+    bool g2 = data.getByKey("name", tmp, 31);
+    EXPECT_TRUE(g2);
+    EXPECT_STREQ("Scott", tmp);
+}
+
+TEST(DynamicConfigSerializer, Set_Replaces) {
+    DynamicConfigSerializer data;
+
+    bool s1 = data.setByKey("age", "11");
+    bool s2 = data.setByKey("name", "Scott");
+    EXPECT_TRUE(s1 && s2);
+
+    bool s3 = data.setByKey("age", "333");
+    EXPECT_TRUE(s3);
+
+    char tmp[32];
+    bool g1 = data.getByKey("age", tmp, 31);
+    EXPECT_TRUE(g1);
+    EXPECT_STREQ("333", tmp);
+
+    bool g2 = data.getByKey("name", tmp, 31);
+    EXPECT_TRUE(g2);
+    EXPECT_STREQ("Scott", tmp);
+}
+
+TEST(DynamicConfigSerializer, GetUnknown_Fail) {
+    DynamicConfigSerializer data;
+
+    bool s1 = data.setByKey("age", "11");
+    EXPECT_TRUE(s1);
+
+    char tmp[32];
+    bool g2 = data.getByKey("name", tmp, 31);
+    EXPECT_FALSE(g2);
+}
+
+TEST(DynamicConfigSerializer, SaveCustom_Basic) {
+    MockPrintStream s;
+    DynamicConfigSerializer data;
+
+    bool s1 = data.setByKey("age", "11");
+    bool s2 = data.setByKey("name", "Scott");
+    EXPECT_TRUE(s1 && s2);
+
+    bool success = data.saveSerial(s);
+    EXPECT_TRUE(success);
+
+    auto l = s.getLength();
+    char tmp[128];
+    memcpy(tmp, s.getBytes(), l);
+    tmp[l] = 0;
+
+    const char* expect = "{age:\"11\",name:\"Scott\"}";
+    EXPECT_STREQ(expect, tmp);
+}
+
+TEST(DynamicConfigSerializer, LoadCustom_Basic) {
+    MockInputStream s("{age:\"" TEST_INT_S "\",name:\"Scott\"}");
+    DynamicConfigSerializer data;
+
+    bool success = data.loadSerial(s);
+    EXPECT_TRUE(success);
+
+    char tmp[32];
+    bool g1 = data.getByKey("age", tmp, 31);
+    EXPECT_TRUE(g1);
+    EXPECT_STREQ(TEST_INT_S, tmp);
+
+    bool g2 = data.getByKey("name", tmp, 31);
+    EXPECT_TRUE(g2);
+    EXPECT_STREQ("Scott", tmp);
 }
 
 // ── keys with digits, unknown groups, former key names ─────────────────────

@@ -10,6 +10,10 @@
 #endif
 
 class HeltecV4Board : public ESP32Board {
+  KeyValueStore* _prefs = NULL;
+
+  bool setLoRaFemLnaEnabled(bool enable);
+  bool isLoRaFemLnaEnabled() const;
 
 protected:
   float adc_mult = ADC_MULTIPLIER;
@@ -23,12 +27,12 @@ public:
     return (adc_mult == 0.0f) ? ADC_MULTIPLIER : adc_mult;
   }
   void begin();
+  void attachDynamicPrefs(KeyValueStore* prefs);
+  bool handleCommand(const char* command, uint32_t sender_timestamp, char* reply) override;
+
   void onBeforeTransmit(void) override;
   void onAfterTransmit(void) override;
   void powerOff() override;
-  bool setLoRaFemLnaEnabled(bool enable) override;
-  bool canControlLoRaFemLna() const override;
-  bool isLoRaFemLnaEnabled() const override;
   uint16_t getBattMilliVolts() override;
   bool setAdcMultiplier(float multiplier) override {
     if (multiplier == 0.0f) {

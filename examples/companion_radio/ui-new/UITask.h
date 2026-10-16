@@ -129,8 +129,15 @@ public:
 
 
   // from AbstractUITask
-  void msgRead(int msgcount) override;
-  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm = false) override;
+  // MyMesh::Listener. Messages reach the screen through onShowMessage(): MyMesh
+  // hands over the text as it should be shown (compatibility transforms, decoded
+  // or placeholder lines for binary channel data); the *Recv hooks only alert.
+  void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) override;
+  void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) override;
+  void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) override;
+  void onQueueSizeChanged(int msgcount) override;
+  void onShowMessage(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm) override;
+  void onStatusChanged() override { notify(); }
   void notify(UIEventType t = UIEventType::none) override;
   void loop() override;
 

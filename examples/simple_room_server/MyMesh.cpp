@@ -728,8 +728,8 @@ void MyMesh::begin(FILESYSTEM *fs) {
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.setTxPower(_prefs.tx_power_dbm);
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
-  board.setLoRaFemLnaEnabled(_prefs.radio_fem_rxgain);
-  board.setLoRaFemPaGainEnabled(_prefs.radio_fem_txgain);
+
+  board.attachDynamicPrefs(_prefs.getCustom());
 
   updateAdvertTimer();
   updateFloodAdvertTimer();
@@ -1000,6 +1000,8 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
   } else if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
     strcpy(reply, "setperm, get acl, room.post");
     _cli.appendCommonHelp(reply, 155);
+  } else if (memcmp(command, "set repeat on", 13) == 0) {
+    strcpy(reply, "ERR - repeat now deprecated");
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
