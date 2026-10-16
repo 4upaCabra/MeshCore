@@ -29,12 +29,11 @@
 #include "DataStore.h"
 #include "NodePrefs.h"
 
-#ifdef WITH_WIFI_SWITCHING
-  #if !defined(ENABLE_WIFI_INTERFACE) || !defined(ENABLE_USB_INTERFACE)
-    #error "uni (WITH_WIFI_SWITCHING) runs on the upstream transports: add ENABLE_WIFI_INTERFACE and ENABLE_USB_INTERFACE"
-  #endif
+#ifdef WITH_COMMS_SWITCHING
   #include "WifiPrefs.h"
-  #include <WiFi.h>
+  #ifdef ENABLE_WIFI_INTERFACE
+    #include <WiFi.h>
+  #endif
 #endif
 
 #include <RTClib.h>
@@ -354,29 +353,34 @@ public:
   void setFramedPacketsEnabled(bool enabled);
 #endif
 
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
   // The transports themselves live in main.cpp, registered in interface_manager;
   // the mode (BLE, BLE+WiFi, USB) says which of them are enabled, and main.cpp
   // applies it through this hook.
   void setCommsHook(void (*hook)(uint8_t mode)) { _comms_hook = hook; }
   void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
+  // WiFi and USB carry the app link themselves and drop when the chip light-sleeps;
+  // BLE survives it.
+  bool commsForbidsSleep() const { return _wifi_prefs.comms_mode != COMMS_MODE_BLE; }
+  // USB transport active: its Serial carries companion frames, so no other text
+  // (CLI rescue banners, serial chat) may go there.
+  bool isUsbComms() const { return _wifi_prefs.comms_mode == COMMS_MODE_USB; }
+  WifiPrefs* getWifiPrefs() { return &_wifi_prefs; }
+  void saveWifiPrefs();
+  void initCommsFromPrefs();
+#ifdef ENABLE_WIFI_INTERFACE
   // A join in progress: WiFi chosen and not up yet, for the first 15 s. Later
   // attempts are upstream's background reconnect, the menu does not wait for them.
   bool isWifiConnecting() const {
     return _wifi_prefs.comms_mode == COMMS_MODE_WIFI && WiFi.status() != WL_CONNECTED
         && millis() - _wifi_attempt_start < 15000;
   }
-  // WiFi and USB carry the app link themselves and drop when the chip light-sleeps;
-  // BLE survives it.
-  bool commsForbidsSleep() const { return _wifi_prefs.comms_mode != COMMS_MODE_BLE; }
   bool isWifiConnected() const { return WiFi.status() == WL_CONNECTED; }
   String getWifiIP() const { return WiFi.localIP().toString(); }
-  WifiPrefs* getWifiPrefs() { return &_wifi_prefs; }
   void addWifiNetwork(const char* ssid, const char* pass);
   void removeWifiNetwork(const char* ssid);
-  void saveWifiPrefs();
   void loadWifiPrefs();
-  void initCommsFromPrefs();
+#endif
 #endif
 
   // Whether an app is connected over any transport.
@@ -751,15 +755,17 @@ private:
   void runCliChain(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
 #endif
 
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
   WifiPrefs           _wifi_prefs;            // in-memory model; stored in NodePrefs
   uint32_t            _wifi_attempt_start = 0;
   void                (*_comms_hook)(uint8_t mode) = nullptr;
+#ifdef ENABLE_WIFI_INTERFACE
   void                wifiPrefsFromNodePrefs();
   bool                handleUniWifiSet(const char* command, char* reply);
 public:
   void                wifiScanDone();   // back to WiFi off after a scan, unless WiFi is the mode
 private:
+#endif
 #endif
 };
 

@@ -8,6 +8,25 @@
 #define COMMS_MODE_WIFI  1
 #define COMMS_MODE_USB   2
 
+// Whether this build can actually use a transport mode. BLE always exists; WiFi
+// and USB only when their interface was compiled in. A stored mode that this
+// build lacks is applied as BLE.
+static inline bool commsModeAvailable(uint8_t mode) {
+  switch (mode) {
+#ifdef ENABLE_WIFI_INTERFACE
+    case COMMS_MODE_WIFI: return true;
+#else
+    case COMMS_MODE_WIFI: return false;
+#endif
+#ifdef ENABLE_USB_INTERFACE
+    case COMMS_MODE_USB: return true;
+#else
+    case COMMS_MODE_USB: return false;
+#endif
+    default: return true;   // BLE
+  }
+}
+
 #define IP_MODE_DHCP     0
 #define IP_MODE_STATIC   1
 

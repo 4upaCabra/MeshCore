@@ -8,7 +8,7 @@
 #include "../UILang.h"
 #include "target.h"
 #include <time.h>
-#if defined(WIFI_SSID) || defined(WITH_WIFI_SWITCHING)
+#if defined(WIFI_SSID) || defined(ENABLE_WIFI_INTERFACE)
   #include <WiFi.h>
 #endif
 
@@ -175,7 +175,7 @@ class HomeScreen : public UIScreen {
     FIRST,
     RECENT,
     RADIO,
-#ifndef WITH_WIFI_SWITCHING
+#ifndef WITH_COMMS_SWITCHING
     BLUETOOTH,
 #endif
     ADVERT,
@@ -233,7 +233,7 @@ class HomeScreen : public UIScreen {
   SettingsPage _settings_page = SettingsPage::ROOT;
 
 
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
   bool _in_wifi_select  = false;
   int  _wifi_sel        = 0;
   bool _wifi_wait       = false;
@@ -366,7 +366,7 @@ public:
     if (_pin_show_until && millis() >= _pin_show_until) {
       _pin_show_until = 0;  // render() will show **** on next cycle
     }
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
     if (_in_wifi_select && _wifi_wait && !the_mesh.isWifiConnecting()) {
       _in_wifi_select = false;
       _wifi_wait      = false;
@@ -432,19 +432,19 @@ public:
       if (i == 3) return !(d && d->isEink());
       if (i >= 4) return extraHidden(UI_FOLDER_DISPLAY, i - 4, d);
     } else if (page == SettingsPage::COMMS) {
-#ifndef WITH_WIFI_SWITCHING
+#ifndef WITH_COMMS_SWITCHING
       if (i == 1) return true;
 #endif
 #ifndef WITH_COMPANION_CLI
       if (i == 2 || i == 4) return true;
 #endif
-#if !defined(BLE_PIN_CODE) && !defined(WITH_WIFI_SWITCHING)
+#if !defined(BLE_PIN_CODE) && !defined(WITH_COMMS_SWITCHING)
       if (i == 3) return true;   // no BLE in this build: nothing to name
 #endif
       if (i >= 5) return extraHidden(UI_FOLDER_CONNECTION, i - 5, d);
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1) {
-#if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING))
+#if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_COMMS_SWITCHING))
         return true;
 #endif
       }
@@ -554,13 +554,16 @@ public:
 
     if (page == SettingsPage::COMMS) {
       if (i == 1) {
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
         uint8_t mode = the_mesh.getWifiPrefs()->comms_mode;
+#if defined(ENABLE_WIFI_INTERFACE)
         if (mode == COMMS_MODE_WIFI) {
           if (the_mesh.isWifiConnecting())     snprintf(val, val_len, "WiFi...");
           else if (the_mesh.isWifiConnected()) snprintf(val, val_len, "WiFi OK");
           else                                 snprintf(val, val_len, "WiFi");
-        } else if (mode == COMMS_MODE_USB) {
+        } else
+#endif
+        if (mode == COMMS_MODE_USB) {
           snprintf(val, val_len, "USB");
         } else {
           snprintf(val, val_len, "BLE");
@@ -705,7 +708,7 @@ public:
       }
     } else if (page == SettingsPage::COMMS) {
       if (i == 1) {
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
         if (!_wifi_wait && fwd) {
           _in_wifi_select   = true;
           _wifi_sel         = 0;
@@ -714,6 +717,13 @@ public:
           _wifi_scan_n      = -1;
           WiFi.mode(WIFI_STA);
           WiFi.scanNetworks(true);
+        }
+#elif defined(WITH_COMMS_SWITCHING)
+        // No WiFi here: the Interface row steps through the transports this build
+        // has (BLE and USB), skipping the unavailable ones.
+        if (fwd) {
+          uint8_t mode = the_mesh.getWifiPrefs()->comms_mode;
+          the_mesh.switchCommsMode(mode == COMMS_MODE_BLE ? COMMS_MODE_USB : COMMS_MODE_BLE);
         }
 #endif
       } else if (i == 2) {
@@ -1001,7 +1011,7 @@ public:
         display.setColor(UIColor::primary_txt);
         display.setTextSize(hdr_size);
         display.drawTextCentered(display.width() / 2, content_y + 24, _TR("< Connected >", "< Подключено >"));
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
       } else if (the_mesh.isWifiConnected()) {
         String wip = the_mesh.getWifiIP();
         snprintf(tmp, sizeof(tmp), "IP:%s", wip.c_str());
@@ -1014,7 +1024,7 @@ public:
         display.drawTextCentered(display.width() / 2, content_y + 24, "WiFi...");
 #endif
       } else if (the_mesh.getBLEPin() != 0) {
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
         if (the_mesh.getWifiPrefs()->comms_mode != COMMS_MODE_USB)   // BLE runs alongside WiFi
 #endif
         {
@@ -1075,7 +1085,7 @@ public:
         snprintf(tmp, sizeof(tmp), _TR("Noise floor: %d", "Уровень шума: %d"), radio_driver.getNoiseFloor());
         display.setCursor(0, y); display.print(tmp);
       }
-#ifndef WITH_WIFI_SWITCHING
+#ifndef WITH_COMMS_SWITCHING
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(UIColor::primary_txt);
       display.drawXbm((display.width() - 32) / 2, content_y,
@@ -1236,7 +1246,7 @@ public:
 #endif
     } else if (_page == HomePage::SETTINGS) {
       display.setTextSize(hdr_size);
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
       if (_in_wifi_select) {
         const int LINE_H_W  = display.getLineH(hdr_size) - 1;
         const int CURSOR_W  = 6 * hdr_size;
@@ -1481,7 +1491,7 @@ public:
       }
     }
 
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
     if (_page == HomePage::SETTINGS && _in_wifi_select) {
       // Any key dismisses the full-screen command overlay
       if (_wifi_cmd_shown) {
@@ -1624,7 +1634,7 @@ public:
 #endif
       return true;
     }
-#ifndef WITH_WIFI_SWITCHING
+#ifndef WITH_COMMS_SWITCHING
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
       if (_task->isBluetoothEnabled()) {  // toggle Bluetooth on/off
         _task->disableBluetooth();
@@ -2528,6 +2538,11 @@ char UITask::handleLongPress(char c) {
     return 0;
   }
   if (millis() - ui_started_at < 8000) {   // long press in first 8 seconds since startup -> CLI/rescue
+#ifdef WITH_COMMS_SWITCHING
+    // USB mode: the same Serial carries the app's companion frames, so the
+    // rescue CLI (which prints its banner and echoes) stays off.
+    if (the_mesh.isUsbComms()) return c;
+#endif
     the_mesh.enterCLIRescue();
     showAlert("CLI RESCUE", 2000);
     c = 0;   // consume event

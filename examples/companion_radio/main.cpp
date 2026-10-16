@@ -65,10 +65,10 @@
     #define ESP32_PM_NATIVE_USB    0
   #endif
 
-  // WITH_WIFI_SWITCHING is not in the list: there the transport is chosen at runtime,
+  // WITH_COMMS_SWITCHING is not in the list: there the transport is chosen at runtime,
   // so light sleep stays configured and esp32_pm_wantsAwake() holds the lock while
   // the active transport is WiFi or USB.
-  #if defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING)) || defined(SERIAL_RX) || defined(ETHERNET_ENABLED)
+  #if defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_COMMS_SWITCHING)) || defined(SERIAL_RX) || defined(ETHERNET_ENABLED)
     // The transport itself is WiFi, USB, UART or Ethernet: sleeping breaks the link,
     // not just the log.
     #define ESP32_PM_LIGHT_SLEEP   0
@@ -97,7 +97,7 @@ static uint32_t _atoi(const char* sp) {
 MultiSerialInterface interface_manager;
 
 // include bluetooth interface (uni builds have no BLE_PIN_CODE: the PIN comes from prefs)
-#if defined(BLE_PIN_CODE) || defined(WITH_WIFI_SWITCHING)
+#if defined(BLE_PIN_CODE) || defined(WITH_COMMS_SWITCHING)
   #ifdef ESP32
     // include esp32 bluetooth interface
     #include <helpers/esp32/SerialBLEInterface.h>
@@ -145,7 +145,7 @@ MultiSerialInterface interface_manager;
 #endif
 
 // include usb interface
-#if defined(ENABLE_USB_INTERFACE) && defined(WITH_WIFI_SWITCHING)
+#if defined(ENABLE_USB_INTERFACE) && defined(WITH_COMMS_SWITCHING)
   #include "UsbLinkInterface.h"
   UsbLinkInterface usb_serial_interface;
 #elif defined(ENABLE_USB_INTERFACE)
@@ -207,7 +207,7 @@ void halt() {
 }
 
 /* WIFI RECONNECT TRACKERS */
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
 static void uniApplyCommsMode(uint8_t mode);
 #endif
 #ifdef ENABLE_WIFI_INTERFACE
@@ -219,11 +219,13 @@ static void uniApplyCommsMode(uint8_t mode);
   bool wifi_enabled = false;   // set at boot from prefs; false also when the effective SSID is blank
 #endif
 
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
 // uni transport modes: BLE alone (the chip may sleep), BLE and WiFi together,
 // or USB alone. Every transport stays registered in interface_manager; the mode
 // only enables and disables them, so a change needs no reboot.
 static void uniApplyCommsMode(uint8_t mode) {
+  // A mode this build lacks (stored by a different firmware) is applied as BLE.
+  if (!commsModeAvailable(mode)) mode = COMMS_MODE_BLE;
   const bool wifi = mode == COMMS_MODE_WIFI;
   const bool usb = mode == COMMS_MODE_USB;
   WifiPrefs* wp = the_mesh.getWifiPrefs();
@@ -231,6 +233,7 @@ static void uniApplyCommsMode(uint8_t mode) {
   if (usb) bluetooth_interface.disable();
   else     bluetooth_interface.enable();
 
+#ifdef ENABLE_WIFI_INTERFACE
   if (wifi && wp->network_count > 0) {
     StrHelper::strncpy(wifi_ssid, wp->networks[0].ssid, sizeof(wifi_ssid));
     StrHelper::strncpy(wifi_pwd, wp->networks[0].password, sizeof(wifi_pwd));
@@ -255,11 +258,17 @@ static void uniApplyCommsMode(uint8_t mode) {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
   }
+#endif
 
+#ifdef ENABLE_USB_INTERFACE
   if (usb) usb_serial_interface.enable();
   else     usb_serial_interface.disable();
+#endif
 
+#ifdef ESP32
+  // nRF52Board has no sleep inhibit and keeps its own power logic.
   board.setInhibitSleep(wifi || usb);
+#endif
 }
 #endif
 
@@ -299,7 +308,7 @@ static uint16_t esp32_pm_yieldFor(uint8_t mode) {
 
 static bool esp32_pm_wantsAwake() {
   if (ESP32_PM_LIGHT_SLEEP == 0) return false;   // this transport forbids sleeping
-  #if defined(WITH_WIFI_SWITCHING)
+  #if defined(WITH_COMMS_SWITCHING)
     if (the_mesh.commsForbidsSleep()) return true;
   #endif
   // An e-ink panel drives its waveform for seconds: sleeping through it leaves the
@@ -576,12 +585,12 @@ void setup() {
   the_mesh.setBLEPin(0);
 #endif
 
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
   the_mesh.initCommsFromPrefs();   // uni: transport settings and the BLE PIN
 #endif
 
 // add bluetooth interface
-#if defined(BLE_PIN_CODE) || defined(WITH_WIFI_SWITCHING)
+#if defined(BLE_PIN_CODE) || defined(WITH_COMMS_SWITCHING)
   bluetooth_interface.begin(blePrefixEnabled(the_mesh.getNodePrefs()) ? BLE_NAME_PREFIX : "",
                             the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
   interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
@@ -596,7 +605,7 @@ void setup() {
   }
   // only start wifi if enabled and ssid is not empty
   wifi_enabled = the_mesh.getNodePrefs()->wifi_enabled;
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
   // uni: the interface is always registered; the mode turns WiFi on and off
   // at runtime (uniApplyCommsMode below), not only at boot.
   // The TCP server starts in uniApplyCommsMode(), once WiFi is up: before the
@@ -669,7 +678,7 @@ void setup() {
 #endif
 
   the_mesh.startInterface(interface_manager);
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
   the_mesh.setCommsHook(uniApplyCommsMode);
   uniApplyCommsMode(the_mesh.getWifiPrefs()->comms_mode);
 #endif
@@ -748,7 +757,7 @@ void loop() {
     // With WiFi or USB active the lock keeps the chip awake anyway, so the yield
     // would only add latency to a link interface_manager does not even see.
     if (!interface_manager.isReadBusy() && !interface_manager.isWriteBusy()
-  #if defined(WITH_WIFI_SWITCHING)
+  #if defined(WITH_COMMS_SWITCHING)
         && !the_mesh.commsForbidsSleep()
   #endif
        ) {

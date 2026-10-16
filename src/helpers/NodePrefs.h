@@ -131,11 +131,15 @@ public:
   char     cli_pin[9];          // remote CLI PIN, 8 hex; generated once (MyMesh::ensureCliPin)
   uint8_t  rcli_mode = 0;       // REMOTE_CLI_*: who may run CLI commands over the mesh
   uint8_t  rcli_fav = 0;        // 0 = a sender with the right PIN becomes a favourite, 1 = no
-#ifdef WITH_WIFI_SWITCHING
-  // uni transport (COMMS_MODE_* in WifiPrefs.h). Network 1 is upstream's
-  // wifi.ssid / wifi.pwd; the saved networks 2..5, the static IP and the TCP
-  // port have no upstream equivalent and live here.
+#ifdef WITH_COMMS_SWITCHING
+  // App transport chosen at runtime (COMMS_MODE_* in WifiPrefs.h). Persisted on
+  // every platform that can switch, including nRF52 where no WiFi exists.
   uint8_t  comms_mode = 0;
+#endif
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
+  // WiFi side of the uni transport. Network 1 is upstream's wifi.ssid /
+  // wifi.pwd; the saved networks 2..5, the static IP and the TCP port have no
+  // upstream equivalent and live here.
   char     wifi_ssid_x[4][33];
   char     wifi_pwd_x[4][64];
   uint8_t  wifi_ip_mode = 0;
@@ -349,8 +353,10 @@ private:
       def("cli_pin", _parent->cli_pin, sizeof(_parent->cli_pin));
       def("rcli_mode", _parent->rcli_mode);
       def("rcli_fav", _parent->rcli_fav);
-#ifdef WITH_WIFI_SWITCHING
+#ifdef WITH_COMMS_SWITCHING
       def("comms", _parent->comms_mode);
+#endif
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
       def("wifi2_ssid", _parent->wifi_ssid_x[0], sizeof(_parent->wifi_ssid_x[0]));
       def("wifi2_pwd",  _parent->wifi_pwd_x[0],  sizeof(_parent->wifi_pwd_x[0]));
       def("wifi3_ssid", _parent->wifi_ssid_x[1], sizeof(_parent->wifi_ssid_x[1]));
@@ -427,7 +433,7 @@ public:
     bridge_secret[0] = 0;
     owner_info[0] = 0;
     cli_pin[0] = 0;
-#ifdef WITH_WIFI_SWITCHING
+#if defined(WITH_COMMS_SWITCHING) && defined(ENABLE_WIFI_INTERFACE)
     memset(wifi_ssid_x, 0, sizeof(wifi_ssid_x));
     memset(wifi_pwd_x, 0, sizeof(wifi_pwd_x));
     wifi_ip[0] = wifi_gw[0] = wifi_mask[0] = 0;
