@@ -679,7 +679,13 @@ public:
 #endif
       } else if (i == 2) {
 #ifdef WITH_COMPANION_CLI
-        _pin_show_until = millis() + 3000;
+        // First press shows the PIN; a second one while it is shown makes a new one.
+        if (_pin_show_until && millis() < _pin_show_until) {
+          the_mesh.regenerateCliPin();
+          _pin_show_until = millis() + 5000;
+        } else {
+          _pin_show_until = millis() + 3000;
+        }
 #endif
       } else if (i == 3 && _node_prefs) {
         // Applies at the next boot: the BLE name is set once when BLE starts.

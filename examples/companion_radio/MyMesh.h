@@ -292,17 +292,22 @@ public:
   void deferSavePrefs();   // schedule flash write to happen outside of BLE connection
 
 #ifdef WITH_COMPANION_CLI
-  const char* getCliPin() const { return _cli_pin; }
+  const char* getCliPin() const { return _prefs.cli_pin; }
+  void regenerateCliPin() { ensureCliPin(true); }
 
   int getChatMode() const {
-    if ( _remote_cli_enabled &&  _terminal_cli_enabled) return 0;  // C+P
-    if (!_remote_cli_enabled &&  _terminal_cli_enabled) return 1;  // cht
-    if ( _remote_cli_enabled && !_terminal_cli_enabled) return 2;  // PM
-    return 3;                                                       // OFF
+    bool remote = _prefs.rcli_mode != REMOTE_CLI_OFF;
+    if ( remote &&  _terminal_cli_enabled) return 0;  // C+P
+    if (!remote &&  _terminal_cli_enabled) return 1;  // cht
+    if ( remote && !_terminal_cli_enabled) return 2;  // PM
+    return 3;                                         // OFF
   }
   void setChatMode(int m) {
-    _remote_cli_enabled   = (m == 0 || m == 2);
+    bool remote = (m == 0 || m == 2);
+    if (!remote) _prefs.rcli_mode = REMOTE_CLI_OFF;
+    else if (_prefs.rcli_mode == REMOTE_CLI_OFF) _prefs.rcli_mode = REMOTE_CLI_PIN;
     _terminal_cli_enabled = (m == 0 || m == 1);
+    deferSavePrefs();
   }
 
   int getTimesyncMode() const {
@@ -732,8 +737,21 @@ private:
 #ifdef WITH_COMPANION_CLI
   CommonCLI*             _cli = nullptr;
   CompanionCLICallbacks* _cli_cb = nullptr;
-  char                   _cli_pin[9];
-  bool                   _remote_cli_enabled = true;
+  // Remote CLI: per-sender replay and wrong-PIN state (RAM only).
+  struct RemoteCliPeer {
+    uint8_t  key[4];        // sender public key prefix; all zero = free slot
+    uint32_t last_ts;       // newest accepted command timestamp (sender clock)
+    uint32_t lock_until;    // millis(); 0 = not locked
+    uint32_t seen;          // millis() of the last use, for eviction
+    uint8_t  bad;           // wrong PINs in a row
+  };
+  RemoteCliPeer          _rcli_peers[8] = {};
+  void ensureCliPin(bool regenerate = false);
+  bool setCliPin(const char* pin);
+  RemoteCliPeer* rcliPeer(const ContactInfo& from);
+  int  rcliCheckPin(const ContactInfo& from, const char* text, uint32_t sender_ts, const char** cmd);
+  bool rcliFresh(RemoteCliPeer* p, uint32_t sender_ts);
+  void rcliAccepted(const ContactInfo& from);
   bool                   _terminal_cli_enabled = true;
   bool                   _ts_from_adverts = true;
   bool                   _ts_from_messages = true;

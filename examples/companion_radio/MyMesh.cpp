@@ -1477,10 +1477,15 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
     else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
   }
 #ifdef WITH_COMPANION_CLI
-  MESH_DEBUG_PRINTLN("PM recv: cli=%s pin='%.8s' text='%.20s'", _cli ? "set" : "NULL", _cli_pin, text);
-  if (_remote_cli_enabled && _cli_pin[0] && strlen(text) > 8 && strncasecmp(text, _cli_pin, 8) == 0 && text[8] == ' ') {
-    handleRemoteCLI(from, sender_timestamp, text + 9);
-    return;
+  if (_prefs.rcli_mode == REMOTE_CLI_PIN || _prefs.rcli_mode == REMOTE_CLI_BOTH) {
+    const char* cmd;
+    int r = rcliCheckPin(from, text, sender_timestamp, &cmd);
+    if (r > 0) {
+      rcliAccepted(from);
+      handleRemoteCLI(from, sender_timestamp, cmd);
+      return;
+    }
+    if (r < 0) return;   // replayed, stale or locked out: not shown either
   }
 #endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
@@ -1496,9 +1501,22 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
                               const char *text, char* reply) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
 #ifdef WITH_COMPANION_CLI
-  if (from.isRemoteCLIAllowed()) {
+  const char* cmd = text;
+  bool allowed = false;
+  const uint8_t mode = _prefs.rcli_mode;
+  if (mode == REMOTE_CLI_PIN || mode == REMOTE_CLI_BOTH) {
+    int r = rcliCheckPin(from, text, sender_timestamp, &cmd);
+    if (r < 0) return;   // no reply: replayed, stale or locked out
+    if (r > 0) { allowed = true; rcliAccepted(from); }
+  }
+  if (!allowed && (mode == REMOTE_CLI_FLAG || mode == REMOTE_CLI_BOTH) && from.isRemoteCLIAllowed()) {
+    if (!rcliFresh(rcliPeer(from), sender_timestamp)) return;
+    cmd = text;
+    allowed = true;
+  }
+  if (allowed) {
     static char cmdBuf[256];
-    strncpy(cmdBuf, text, sizeof(cmdBuf) - 1);
+    strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
     cmdBuf[sizeof(cmdBuf) - 1] = '\0';
     char* e = cmdBuf + strlen(cmdBuf);
     while (e > cmdBuf && (e[-1] == ' ' || e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
@@ -1514,9 +1532,19 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
       _pending_poweroff_at = futureMillis(500);
       _pending_poweroff_deadline = futureMillis(30000);
       _app_drain_until = 0;
-    } else if (!handleCliCmd(sender_timestamp, cmdBuf, reply, true)) {
-      if (_cli) _cli->handleCommand(sender_timestamp, cmdBuf, reply);
-      else strcpy(reply, "Unknown command");
+    } else {
+      // The reply goes back in one CLI_DATA packet (BaseChatMesh hands us
+      // 161 bytes), but our handlers write up to 512: run them in a buffer of
+      // their own and cut the reply to fit.
+      static char out[512];
+      out[0] = 0;
+      if (!handleCliCmd(sender_timestamp, cmdBuf, out, true)) {
+        if (_cli) _cli->handleCommand(sender_timestamp, cmdBuf, out);
+        else strcpy(out, "Unknown command");
+      }
+      const size_t cap = 160;
+      if (strlen(out) > cap) { memcpy(reply, out, cap - 3); strcpy(reply + cap - 3, "..."); }
+      else strcpy(reply, out);
     }
     return;
   }
@@ -2217,12 +2245,8 @@ void MyMesh::begin() {
 #ifdef WITH_COMPANION_CLI
   _cli_cb = new CompanionCLICallbacks(*this, *_store);
   _cli    = new CommonCLI(board, *getRTCClock(), sensors, &_prefs, _cli_cb);
-  { // PIN from last 4 bytes of private key — not derivable from public info
-    uint8_t prv[PRV_KEY_SIZE];
-    self_id.writeTo(prv, PRV_KEY_SIZE);
-    mesh::Utils::toHex(_cli_pin, prv + PRV_KEY_SIZE - 4, 4);
-  }
-  Serial.printf("CLI PIN: %s\n", _cli_pin);
+  ensureCliPin();
+  Serial.printf("CLI PIN: %s\n", _prefs.cli_pin);
 
   // auto-register TerminalCLI channel if not present
   {
@@ -4206,7 +4230,8 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   } else if (strcmp(cmd, "help app") == 0) {
     snprintf(buf, 512,
       "App & Features:\n"
-      "get/set remote.cli|terminal.cli [on|off]\n"
+      "get/set remote.cli [pin|flag|both|off], remote.cli.fav [on|off]\n"
+      "get/set cli.pin [<8 hex>|new], terminal.cli [on|off]\n"
       "get/set cyr2lat.channels|cyr2lat.contacts [on|off]\n"
 #ifdef WITH_MCOTXT
       "get/set mcotxt [on|off]\n"
@@ -4250,9 +4275,18 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     snprintf(buf, 512, "Unknown topic '%s'. Use: help [radio|sys|app|all]", cmd + 5);
   } else if (strcmp(cmd, "pin") == 0) {
     if (_prefs.ble_pin == 0)
-      snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu (auto, new random on reboot)", _cli_pin, (unsigned long)_active_ble_pin);
+      snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu (auto, new random on reboot)", _prefs.cli_pin, (unsigned long)_active_ble_pin);
     else
-      snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu", _cli_pin, (unsigned long)_prefs.ble_pin);
+      snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu", _prefs.cli_pin, (unsigned long)_prefs.ble_pin);
+
+  } else if (strcmp(cmd, "get cli.pin") == 0) {
+    snprintf(buf, 512, "cli.pin: %s", _prefs.cli_pin);
+  } else if (strcmp(cmd, "set cli.pin new") == 0) {
+    ensureCliPin(true);
+    snprintf(buf, 512, "cli.pin: %s (new)", _prefs.cli_pin);
+  } else if (strncmp(cmd, "set cli.pin ", 12) == 0) {
+    if (setCliPin(cmd + 12)) snprintf(buf, 512, "cli.pin: %s", _prefs.cli_pin);
+    else strcpy(buf, "ERR: cli.pin is 8 hex digits, or 'new'");
 
   } else if (strcmp(cmd, "get ble.pin") == 0) {
     if (_prefs.ble_pin == 0)
@@ -4357,14 +4391,29 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     snprintf(buf, 512, "quiet_quorum: %d", _ts.quiet_quorum);
 
   } else if (strcmp(cmd, "get remote.cli") == 0) {
-    snprintf(buf, 512, "remote.cli: %s", _remote_cli_enabled ? "on" : "off");
-  } else if (strcmp(cmd, "set remote.cli on") == 0) {
-    _remote_cli_enabled = true;
-    strcpy(buf, "remote.cli: on");
-  } else if (strcmp(cmd, "set remote.cli off") == 0) {
-    _remote_cli_enabled = false;
-    if (is_remote) strcpy(buf, "remote.cli: off (this was the last remote command)");
-    else           strcpy(buf, "remote.cli: off");
+    static const char* names[] = { "pin", "flag", "both", "off" };
+    snprintf(buf, 512, "remote.cli: %s", names[_prefs.rcli_mode <= REMOTE_CLI_OFF ? _prefs.rcli_mode : 0]);
+  } else if (strncmp(cmd, "set remote.cli ", 15) == 0) {
+    const char* v = cmd + 15;
+    int m = -1;
+    if (strcmp(v, "pin") == 0 || strcmp(v, "on") == 0) m = REMOTE_CLI_PIN;
+    else if (strcmp(v, "flag") == 0) m = REMOTE_CLI_FLAG;
+    else if (strcmp(v, "both") == 0) m = REMOTE_CLI_BOTH;
+    else if (strcmp(v, "off") == 0)  m = REMOTE_CLI_OFF;
+    if (m < 0) {
+      strcpy(buf, "ERR: remote.cli pin|flag|both|off");
+    } else {
+      _prefs.rcli_mode = m;
+      savePrefs();
+      if (m == REMOTE_CLI_OFF && is_remote) strcpy(buf, "remote.cli: off (this was the last remote command)");
+      else snprintf(buf, 512, "remote.cli: %s", v);
+    }
+  } else if (strcmp(cmd, "get remote.cli.fav") == 0) {
+    snprintf(buf, 512, "remote.cli.fav: %s", _prefs.rcli_fav ? "off" : "on");
+  } else if (strcmp(cmd, "set remote.cli.fav on") == 0 || strcmp(cmd, "set remote.cli.fav off") == 0) {
+    _prefs.rcli_fav = strcmp(cmd + 19, "off") == 0 ? 1 : 0;
+    savePrefs();
+    snprintf(buf, 512, "remote.cli.fav: %s", _prefs.rcli_fav ? "off" : "on");
 
   } else if (strcmp(cmd, "get terminal.cli") == 0) {
     snprintf(buf, 512, "terminal.cli: %s", _terminal_cli_enabled ? "on" : "off");
@@ -4599,6 +4648,100 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   return true;
 }
 
+
+#define RCLI_MAX_BAD     5                 // wrong PINs in a row before a lock
+#define RCLI_LOCK_MS     (10UL * 60 * 1000)
+#define RCLI_MAX_SKEW    (15UL * 60)       // seconds, checked only when our clock is reliable
+
+// The PIN is a hash of the private key and a random salt, made once and kept in
+// prefs: it says nothing about the key and can be replaced (CLI, menu).
+void MyMesh::ensureCliPin(bool regenerate) {
+  bool valid = strlen(_prefs.cli_pin) == 8;
+  for (int i = 0; valid && i < 8; i++) valid = mesh::Utils::isHexChar(_prefs.cli_pin[i]);
+  if (valid && !regenerate) return;
+  uint8_t prv[PRV_KEY_SIZE];
+  self_id.writeTo(prv, PRV_KEY_SIZE);
+  uint8_t salt[16];
+  getRNG()->random(salt, sizeof(salt));
+  uint8_t h[4];
+  mesh::Utils::sha256(h, sizeof(h), prv, PRV_KEY_SIZE, salt, sizeof(salt));
+  memset(prv, 0, sizeof(prv));
+  mesh::Utils::toHex(_prefs.cli_pin, h, sizeof(h));
+  for (char* c = _prefs.cli_pin; *c; c++) *c = tolower(*c);
+  savePrefs();
+}
+
+bool MyMesh::setCliPin(const char* pin) {
+  if (strlen(pin) != 8) return false;
+  for (int i = 0; i < 8; i++) if (!mesh::Utils::isHexChar(pin[i])) return false;
+  for (int i = 0; i < 8; i++) _prefs.cli_pin[i] = tolower(pin[i]);
+  _prefs.cli_pin[8] = 0;
+  savePrefs();
+  return true;
+}
+
+MyMesh::RemoteCliPeer* MyMesh::rcliPeer(const ContactInfo& from) {
+  RemoteCliPeer* free_p = NULL;
+  RemoteCliPeer* oldest = &_rcli_peers[0];
+  static const uint8_t zero[4] = {0, 0, 0, 0};
+  for (auto& p : _rcli_peers) {
+    if (memcmp(p.key, from.id.pub_key, 4) == 0) { p.seen = millis(); return &p; }
+    if (!free_p && memcmp(p.key, zero, 4) == 0) free_p = &p;
+    if ((int32_t)(p.seen - oldest->seen) < 0) oldest = &p;
+  }
+  RemoteCliPeer* p = free_p ? free_p : oldest;
+  memset(p, 0, sizeof(*p));
+  memcpy(p->key, from.id.pub_key, 4);
+  p->seen = millis();
+  return p;
+}
+
+// A command must be newer than the last one from this sender, and - when we
+// trust our own clock - close to now: a recorded packet replayed later, after
+// the mesh's duplicate filter has forgotten it, must not run again.
+bool MyMesh::rcliFresh(RemoteCliPeer* p, uint32_t sender_ts) {
+  if (sender_ts <= p->last_ts) return false;
+  if (getRTCClock()->isTimeReliable()) {
+    uint32_t now = getRTCClock()->getCurrentTime();
+    uint32_t d = sender_ts > now ? sender_ts - now : now - sender_ts;
+    if (d > RCLI_MAX_SKEW) return false;
+  }
+  p->last_ts = sender_ts;
+  return true;
+}
+
+// 1: "<PIN> <command>" with the right PIN, *cmd set; 0: no PIN or a wrong one
+// (an ordinary message); -1: drop - locked out, replayed or stale.
+int MyMesh::rcliCheckPin(const ContactInfo& from, const char* text, uint32_t sender_ts, const char** cmd) {
+  if (strlen(text) < 10 || text[8] != ' ') return 0;
+  for (int i = 0; i < 8; i++) if (!mesh::Utils::isHexChar(text[i])) return 0;
+  RemoteCliPeer* p = rcliPeer(from);
+  if (p->lock_until && (int32_t)(millis() - p->lock_until) < 0) return -1;
+  p->lock_until = 0;
+  if (!_prefs.cli_pin[0] || strncasecmp(text, _prefs.cli_pin, 8) != 0) {
+    if (++p->bad >= RCLI_MAX_BAD) {
+      p->bad = 0;
+      p->lock_until = millis() + RCLI_LOCK_MS;
+      if (!p->lock_until) p->lock_until = 1;
+    }
+    return 0;
+  }
+  p->bad = 0;
+  if (!rcliFresh(p, sender_ts)) return -1;
+  *cmd = text + 9;
+  return 1;
+}
+
+// Whoever knows the PIN stays in the contacts: auto-add overwrites only
+// contacts that are not favourites.
+void MyMesh::rcliAccepted(const ContactInfo& from) {
+  if (_prefs.rcli_fav) return;
+  ContactInfo* c = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+  if (c && !c->isFav()) {
+    c->flags |= 0x01;
+    dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  }
+}
 
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
   char from_hex[9];

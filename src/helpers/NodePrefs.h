@@ -128,6 +128,9 @@ public:
   int8_t   tz_offset = 0;
   uint8_t  ui_lang = 0;   // 0 = EN (default), 1 = RU
   uint8_t  ui_ble_prefix = 0;   // BLE_PREFIX_*: whether the BLE name starts with BLE_NAME_PREFIX
+  char     cli_pin[9];          // remote CLI PIN, 8 hex; generated once (MyMesh::ensureCliPin)
+  uint8_t  rcli_mode = 0;       // REMOTE_CLI_*: who may run CLI commands over the mesh
+  uint8_t  rcli_fav = 0;        // 0 = a sender with the right PIN becomes a favourite, 1 = no
 #ifdef ENABLE_WIFI_INTERFACE
   #ifndef WIFI_SSID
     #define WIFI_SSID ""
@@ -330,6 +333,9 @@ private:
       def("cyr_ct", _parent->cyr2lat_contacts);
       // upstream reads this from the legacy binary but never writes it back
       def("disc_mod", _parent->discovery_mod_timestamp);
+      def("cli_pin", _parent->cli_pin, sizeof(_parent->cli_pin));
+      def("rcli_mode", _parent->rcli_mode);
+      def("rcli_fav", _parent->rcli_fav);
     }
   public:
     SouthPrefs(NodePrefs* parent) : _parent(parent) { }
@@ -391,6 +397,7 @@ public:
     guest_password[0] = 0;
     bridge_secret[0] = 0;
     owner_info[0] = 0;
+    cli_pin[0] = 0;
     default_scope_name[0] = 0;
     memset(default_scope_key, 0, sizeof(default_scope_key));
     memset(extra_sf, 0, sizeof(extra_sf));
@@ -415,6 +422,12 @@ public:
 // stays the default (a prefs file without the key reads 0 = unset = on). Takes
 // effect at boot: the name is handed to the BLE stack once in begin().
 enum { BLE_PREFIX_UNSET = 0, BLE_PREFIX_ON = 1, BLE_PREFIX_OFF = 2 };
+
+// Remote CLI over the mesh (`rcli_mode`). PIN: the command starts with the CLI
+// PIN, from any contact. FLAG: upstream's per-contact "Remote CLI" permission,
+// TXT_TYPE_CLI_COMMAND only. BOTH: either. A plain text message is never a
+// command without the PIN, whatever the mode.
+enum { REMOTE_CLI_PIN = 0, REMOTE_CLI_FLAG = 1, REMOTE_CLI_BOTH = 2, REMOTE_CLI_OFF = 3 };
 
 static inline bool blePrefixEnabled(const NodePrefs* prefs) {
   return prefs == NULL || prefs->ui_ble_prefix != BLE_PREFIX_OFF;
