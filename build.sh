@@ -220,23 +220,34 @@ COMPANION_RELEASE_SKIP=(
   "nibble_screen_connect_companion_radio_ble"
 )
 
-# The companion images a release carries: one per board — the uni image (BLE,
-# WiFi and USB in one) where the board has it, otherwise ble and usb; the
-# asynchronous e-ink variant of either wherever there is one — plus the _ps
+# _ble envs that carry USB too (and WiFi where it fits), the transport chosen at
+# runtime (WITH_COMMS_SWITCHING in the env's own section).
+get_combined_ble_envs() {
+  awk '/^\[env:/ { env = substr($0, 6, length($0) - 6) }
+       /WITH_COMMS_SWITCHING/ && env != "" { print env }' variants/*/platformio.ini | sort -u
+}
+
+# The companion images a release carries: one per board — the ble image, plus
+# the usb one unless that ble image already carries USB itself; the
+# asynchronous e-ink variant of ble wherever there is one — plus the _ps
 # (ESP32 power saving) twin of every image that has one.
 get_companion_release_envs() {
   local all_envs=($(get_pio_envs))
   declare -A have=()
+  declare -A combined=()
   local bases=()
   local env
   for env in "${all_envs[@]}"; do
     have[$env]=1
   done
+  for env in $(get_combined_ble_envs); do
+    combined[$env]=1
+  done
   for env in "${COMPANION_RELEASE_SKIP[@]}"; do
     unset "have[$env]"
   done
   for env in "${all_envs[@]}"; do
-    if [[ "$env" =~ ^(.*)_companion_radio_(ble|usb|uni)(_async)?$ ]]; then
+    if [[ "$env" =~ ^(.*)_companion_radio_(ble|usb)(_async)?$ ]]; then
       local base="${BASH_REMATCH[1]}"
       [[ " ${bases[*]} " == *" $base "* ]] || bases+=("$base")
     fi
@@ -244,19 +255,14 @@ get_companion_release_envs() {
   for base in "${bases[@]}"; do
     local p="${base}_companion_radio_"
     local picks=()
-    if [[ -n "${have[${p}uni_async]}" ]]; then
-      picks=("${p}uni_async")
-    elif [[ -n "${have[${p}uni]}" ]]; then
-      picks=("${p}uni")
-    else
-      if [[ -n "${have[${p}ble_async]}" ]]; then
-        picks+=("${p}ble_async")
-      elif [[ -n "${have[${p}ble]}" ]]; then
-        picks+=("${p}ble")
-      fi
-      if [[ -n "${have[${p}usb]}" ]]; then
-        picks+=("${p}usb")
-      fi
+    if [[ -n "${have[${p}ble_async]}" ]]; then
+      picks+=("${p}ble_async")
+    elif [[ -n "${have[${p}ble]}" ]]; then
+      picks+=("${p}ble")
+    fi
+    # A skipped (oversized) ble image is not in have[]: its board keeps usb.
+    if [[ -n "${have[${p}usb]}" && ! ( -n "${have[${p}ble]}" && -n "${combined[${p}ble]}" ) ]]; then
+      picks+=("${p}usb")
     fi
     for env in "${picks[@]}"; do
       echo "$env"
