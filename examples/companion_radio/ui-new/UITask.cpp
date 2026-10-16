@@ -1652,22 +1652,12 @@ public:
 #if UI_SENSORS_PAGE == 1
       if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
 #endif
-#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
-      if (_page == HomePage::DISCOVERY) {
-        _task->showAlert(_TR("Repeater disc", "Поиск репитеров"), 800);
-      }
-#endif
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
       _page = (_page + 1) % HomePage::Count;
 #if UI_SENSORS_PAGE == 1
       if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
-#endif
-#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
-      if (_page == HomePage::DISCOVERY) {
-        _task->showAlert(_TR("Repeater disc", "Поиск репитеров"), 800);
-      }
 #endif
       return true;
     }
