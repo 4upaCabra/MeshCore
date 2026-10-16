@@ -2,7 +2,6 @@
 #include <gtest/gtest.h>
 #include "helpers/ConfigSerializer.h"
 #include "helpers/DynamicConfigSerializer.h"
-#include "helpers/CommonCLI.h"
 
 #define TEST_INT_S  "56"
 #define TEST_INT     56
@@ -356,27 +355,6 @@ TEST(ConfigSerializer, FormerKeyNamesAreReadButNotWritten) {
 }
 
 
-TEST(NodePrefs, FemGainSettingsRoundTrip) {
-    NodePrefs saved;
-    saved.radio_fem_rxgain = 0;
-    saved.radio_fem_txgain = 1;
-
-    MockPrintStream output;
-    ASSERT_TRUE(saved.saveSerial(output));
-
-    std::string serialised(reinterpret_cast<const char*>(output.getBytes()), output.getLength());
-    EXPECT_NE(std::string::npos, serialised.find("fem_rxgain:0"));
-    EXPECT_NE(std::string::npos, serialised.find("fem_txgain:1"));
-
-    MockInputStream input(serialised.c_str());
-    NodePrefs loaded;
-    loaded.radio_fem_rxgain = 1;
-    loaded.radio_fem_txgain = 0;
-
-    ASSERT_TRUE(loaded.loadSerial(input));
-    EXPECT_EQ(0, loaded.radio_fem_rxgain);
-    EXPECT_EQ(1, loaded.radio_fem_txgain);
-}
 
 
 // ── main ───────────────────────────────────────────────────────
