@@ -79,16 +79,15 @@ jobs:
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
 
-      # *_ps targets build against the ESP32 power-saving core (tools/ps_framework.py)
+      # Every target may need the ESP32 power-saving core (tools/ps_framework.py);
+      # the install script is idempotent.
       - name: Cache ESP32 PS Core
-        if: endsWith(matrix.target, '_ps')
         uses: actions/cache@v5
         with:
           path: ~/.platformio/ps
           key: ${{ runner.os }}-ps-core-${{ hashFiles('tools/ps_framework.py') }}
 
       - name: Install ESP32 PS Core
-        if: endsWith(matrix.target, '_ps')
         run: python tools/ps_framework.py
 
       - name: Build Firmware

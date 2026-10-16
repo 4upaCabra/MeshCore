@@ -228,9 +228,7 @@ get_combined_ble_envs() {
 }
 
 # The companion images a release carries: one per board — the ble image, plus
-# the usb one unless that ble image already carries USB itself; the
-# asynchronous e-ink variant of ble wherever there is one — plus the _ps
-# (ESP32 power saving) twin of every image that has one.
+# the usb one unless that ble image already carries USB itself.
 get_companion_release_envs() {
   local all_envs=($(get_pio_envs))
   declare -A have=()
@@ -247,29 +245,20 @@ get_companion_release_envs() {
     unset "have[$env]"
   done
   for env in "${all_envs[@]}"; do
-    if [[ "$env" =~ ^(.*)_companion_radio_(ble|usb)(_async)?$ ]]; then
+    if [[ "$env" =~ ^(.*)_companion_radio_(ble|usb)$ ]]; then
       local base="${BASH_REMATCH[1]}"
       [[ " ${bases[*]} " == *" $base "* ]] || bases+=("$base")
     fi
   done
   for base in "${bases[@]}"; do
     local p="${base}_companion_radio_"
-    local picks=()
-    if [[ -n "${have[${p}ble_async]}" ]]; then
-      picks+=("${p}ble_async")
-    elif [[ -n "${have[${p}ble]}" ]]; then
-      picks+=("${p}ble")
+    if [[ -n "${have[${p}ble]}" ]]; then
+      echo "${p}ble"
     fi
     # A skipped (oversized) ble image is not in have[]: its board keeps usb.
     if [[ -n "${have[${p}usb]}" && ! ( -n "${have[${p}ble]}" && -n "${combined[${p}ble]}" ) ]]; then
-      picks+=("${p}usb")
+      echo "${p}usb"
     fi
-    for env in "${picks[@]}"; do
-      echo "$env"
-      if [[ -n "${have[${env}_ps]}" ]]; then
-        echo "${env}_ps"
-      fi
-    done
   done
 }
 

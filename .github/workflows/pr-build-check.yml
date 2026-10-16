@@ -54,5 +54,8 @@ jobs:
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
 
+      - name: Install ESP32 PS Core
+        run: python tools/ps_framework.py
+
       - name: Build ${{ matrix.environment }}
         run: pio run -e ${{ matrix.environment }}

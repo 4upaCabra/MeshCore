@@ -215,8 +215,9 @@ idf.py -DIDF_TARGET=esp32s3 -DSDKCONFIG_DEFAULTS=<штатный sdkconfig + н�
   PlatformIO берёт любой установленный пакет с этим именем, в том числе PS-ядро.
 - `[esp32_ps]` даёт PS-ядро ссылкой
   `symlink://${platformio.core_dir}/ps/framework-arduinoespressif32-2.0.17-ps.1` и флаги
-  `WITH_ESP32_POWER_SAVING=1` + `WITH_ESP32_PM_REQUIRED=1`. Все окружения `*_ps`
-  наследуют их. `WITH_ESP32_PM_REQUIRED` даёт ошибку компиляции, если ядро без
+  `WITH_ESP32_POWER_SAVING=1` + `WITH_ESP32_PM_REQUIRED=1`. ESP32-компаньоны берут их
+  по умолчанию, а репитеры/room_server/sensor включают их отдельными `_ps`-окружениями.
+  `WITH_ESP32_PM_REQUIRED` даёт ошибку компиляции, если ядро без
   `CONFIG_PM_ENABLE`, — «ps»-образ на штатном ядре не соберётся.
 
 Один раз на машину (и в CI перед сборкой):
@@ -224,15 +225,13 @@ idf.py -DIDF_TARGET=esp32s3 -DSDKCONFIG_DEFAULTS=<штатный sdkconfig + н�
 ```
 python tools/ps_framework.py            # скачать релиз, сверить sha256, распаковать
 python tools/ps_framework.py --archive <файл.tar.gz>   # то же из локального архива
-pio run -e Heltec_E290_companion_radio_ble_async_ps
+pio run -e Heltec_E290_companion_radio_ble
 ```
 
 В GitHub Actions (`.github/workflows/firmware-builder.yml`) ядро ставится и
-кэшируется только для целей `*_ps`. В выпуски они пока не входят: списки
-`build.sh get-*-firmwares-to-build` отбирают окружения по суффиксам
-`_companion_radio_ble/_usb`, `_repeater`, `_room_server`, и `_ps` под них не
-попадает. Чтобы включить PS в выпуски, в эти списки добавляют суффиксы `_ps`-окружений
-нужного типа (`_companion_radio_ble_ps`, `_repeater_ps`, `_room_server_ps` и т. п.).
+кэшируется для всех целей: компаньонские сборки ESP32 теперь всегда идут с PS.
+В выпуски компаньоны входят по умолчанию; репитеры/room_server/sensor включают PS
+через соответствующие `_ps`-окружения.
 
 Оба ядра живут рядом, сборки чередуются без переустановки. Подключать архив
 ссылкой прямо в `platform_packages` нельзя: PlatformIO держит один пакет на имя,

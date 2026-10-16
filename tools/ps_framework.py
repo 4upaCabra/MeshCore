@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Install the ESP32 power-saving core next to the stock one.
 
-*_ps environments build against framework-arduinoespressif32 with CONFIG_PM_ENABLE
+Power-saving ESP32 builds (companion by default, plus the *_ps twins) use
+framework-arduinoespressif32 with CONFIG_PM_ENABLE
 (https://github.com/alohataiti/arduino-esp32-ps). PlatformIO keeps one package per
 name, so the PS core is not installed as a package: it is unpacked once into
 <core_dir>/ps/<name> and linked from [esp32_ps] in platformio.ini, while the
-normal environments stay pinned to the stock core.
+stock core stays pinned for builds without power saving.
 
     python tools/ps_framework.py                 # download the release, verify, unpack
     python tools/ps_framework.py --archive F     # from a local archive (same sha256 check)
