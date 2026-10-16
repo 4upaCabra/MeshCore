@@ -444,7 +444,7 @@ public:
       if (i >= 5) return extraHidden(UI_FOLDER_CONNECTION, i - 5, d);
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1) {
-#if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_COMMS_SWITCHING))
+#if !defined(WITH_ESP32_POWER_SAVING) || (defined(ENABLE_WIFI_INTERFACE) && !defined(WITH_COMMS_SWITCHING)) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_COMMS_SWITCHING))
         return true;
 #endif
       }
@@ -1001,11 +1001,17 @@ public:
         sprintf(tmp, _TR("MSG: %d", "СООБЩ: %d"), _task->getMsgCount());
       display.drawTextCentered(display.width() / 2, content_y, tmp);
 
-      #ifdef WIFI_SSID
+      // A build whose WiFi is always on (no runtime switch). Not under WIFI_SSID:
+      // NodePrefs.h defines that for every WiFi build, and the line then sat on
+      // top of the BLE PIN in BLE mode. The switching builds show the IP in the
+      // PIN's place below, once WiFi is up.
+      #if defined(ENABLE_WIFI_INTERFACE) && !defined(WITH_COMMS_SWITCHING)
+      if (_task->hasConnection() || the_mesh.getBLEPin() == 0) {   // the PIN would take this space
         IPAddress ip = WiFi.localIP();
         snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, display.height() - 10, tmp);
+      }
       #endif
       if (_task->hasConnection()) {
         display.setColor(UIColor::primary_txt);

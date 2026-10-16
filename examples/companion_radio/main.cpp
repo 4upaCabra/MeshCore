@@ -68,7 +68,9 @@
   // WITH_COMMS_SWITCHING is not in the list: there the transport is chosen at runtime,
   // so light sleep stays configured and esp32_pm_wantsAwake() holds the lock while
   // the active transport is WiFi or USB.
-  #if defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_COMMS_SWITCHING)) || defined(SERIAL_RX) || defined(ETHERNET_ENABLED)
+  // WIFI_SSID is no test for a WiFi build: since 1.18 NodePrefs.h defines it ("")
+  // for every build with ENABLE_WIFI_INTERFACE, the runtime-switching ones too.
+  #if (defined(ENABLE_WIFI_INTERFACE) && !defined(WITH_COMMS_SWITCHING)) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_COMMS_SWITCHING)) || defined(SERIAL_RX) || defined(ETHERNET_ENABLED)
     // The transport itself is WiFi, USB, UART or Ethernet: sleeping breaks the link,
     // not just the log.
     #define ESP32_PM_LIGHT_SLEEP   0
