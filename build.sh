@@ -215,8 +215,6 @@ build_repeater_firmwares() {
 # their boards fall back to the separate USB image.
 COMPANION_RELEASE_SKIP=(
   "LilyGo_TBeam_1W_companion_radio_ble"
-  "ThinkNode_M5_companion_radio_ble"
-  "nibble_screen_connect_companion_radio_ble"
 )
 
 # _ble envs that carry USB too (and WiFi where it fits), the transport chosen at
