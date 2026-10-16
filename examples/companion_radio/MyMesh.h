@@ -30,10 +30,11 @@
 #include "NodePrefs.h"
 
 #ifdef WITH_WIFI_SWITCHING
+  #if !defined(ENABLE_WIFI_INTERFACE) || !defined(ENABLE_USB_INTERFACE)
+    #error "uni (WITH_WIFI_SWITCHING) runs on the upstream transports: add ENABLE_WIFI_INTERFACE and ENABLE_USB_INTERFACE"
+  #endif
   #include "WifiPrefs.h"
   #include <WiFi.h>
-  #include <helpers/esp32/SerialBLEInterface.h>
-  #include <helpers/wifi/SerialWifiInterface.h>
 #endif
 
 #include <RTClib.h>
@@ -354,11 +355,20 @@ public:
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
+  // The transports themselves live in main.cpp, registered in interface_manager;
+  // the mode (BLE, BLE+WiFi, USB) says which of them are enabled, and main.cpp
+  // applies it through this hook.
+  void setCommsHook(void (*hook)(uint8_t mode)) { _comms_hook = hook; }
   void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
-  bool isWifiConnecting() const { return _wifi_connecting; }
+  // A join in progress: WiFi chosen and not up yet, for the first 15 s. Later
+  // attempts are upstream's background reconnect, the menu does not wait for them.
+  bool isWifiConnecting() const {
+    return _wifi_prefs.comms_mode == COMMS_MODE_WIFI && WiFi.status() != WL_CONNECTED
+        && millis() - _wifi_attempt_start < 15000;
+  }
   // WiFi and USB carry the app link themselves and drop when the chip light-sleeps;
-  // BLE survives it. A connection attempt counts as WiFi even with BLE as fallback.
-  bool commsForbidsSleep() const { return _wifi_connecting || _wifi_prefs.comms_mode != COMMS_MODE_BLE; }
+  // BLE survives it.
+  bool commsForbidsSleep() const { return _wifi_prefs.comms_mode != COMMS_MODE_BLE; }
   bool isWifiConnected() const { return WiFi.status() == WL_CONNECTED; }
   String getWifiIP() const { return WiFi.localIP().toString(); }
   WifiPrefs* getWifiPrefs() { return &_wifi_prefs; }
@@ -366,13 +376,10 @@ public:
   void removeWifiNetwork(const char* ssid);
   void saveWifiPrefs();
   void loadWifiPrefs();
-  void checkWifiConnection();
   void initCommsFromPrefs();
 #endif
 
-  // Whether the interface actually carrying the app link is connected. In
-  // WITH_WIFI_SWITCHING builds MyMesh owns the transport and interface_manager
-  // registers nothing, so its isConnected() is always false there.
+  // Whether an app is connected over any transport.
   bool isAppConnected() const { return _serial != nullptr && _serial->isConnected(); }
 
 #if ENV_INCLUDE_GPS == 1
@@ -745,13 +752,14 @@ private:
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
-  SerialBLEInterface  _ble_iface;
-  SerialWifiInterface _wifi_iface;
-  WifiPrefs           _wifi_prefs;
-  bool                _wifi_connecting = false;
-  uint32_t            _wifi_connect_start = 0;
-  int                 _wifi_net_idx = -1;
-  uint32_t            _wifi_bg_retry_at = 0;
+  WifiPrefs           _wifi_prefs;            // in-memory model; stored in NodePrefs
+  uint32_t            _wifi_attempt_start = 0;
+  void                (*_comms_hook)(uint8_t mode) = nullptr;
+  void                wifiPrefsFromNodePrefs();
+  bool                handleUniWifiSet(const char* command, char* reply);
+public:
+  void                wifiScanDone();   // back to WiFi off after a scan, unless WiFi is the mode
+private:
 #endif
 };
 

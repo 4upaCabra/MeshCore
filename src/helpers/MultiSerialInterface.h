@@ -120,9 +120,10 @@ public:
       return false;
     }
     
-    // check if any interface is connected
+    // check if any enabled interface is connected (a disabled one is neither
+    // read nor written, so a peer it still remembers is not a connection)
     for(auto iface : _interfaces){
-      if(iface.instance && iface.instance->isConnected()) {
+      if(iface.instance && iface.instance->isEnabled() && iface.instance->isConnected()) {
         return true;
       }
     }

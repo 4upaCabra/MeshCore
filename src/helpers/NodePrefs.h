@@ -131,6 +131,19 @@ public:
   char     cli_pin[9];          // remote CLI PIN, 8 hex; generated once (MyMesh::ensureCliPin)
   uint8_t  rcli_mode = 0;       // REMOTE_CLI_*: who may run CLI commands over the mesh
   uint8_t  rcli_fav = 0;        // 0 = a sender with the right PIN becomes a favourite, 1 = no
+#ifdef WITH_WIFI_SWITCHING
+  // uni transport (COMMS_MODE_* in WifiPrefs.h). Network 1 is upstream's
+  // wifi.ssid / wifi.pwd; the saved networks 2..5, the static IP and the TCP
+  // port have no upstream equivalent and live here.
+  uint8_t  comms_mode = 0;
+  char     wifi_ssid_x[4][33];
+  char     wifi_pwd_x[4][64];
+  uint8_t  wifi_ip_mode = 0;
+  char     wifi_ip[16];
+  char     wifi_gw[16];
+  char     wifi_mask[16];
+  uint16_t wifi_port = 0;
+#endif
 #ifdef ENABLE_WIFI_INTERFACE
   #ifndef WIFI_SSID
     #define WIFI_SSID ""
@@ -336,6 +349,22 @@ private:
       def("cli_pin", _parent->cli_pin, sizeof(_parent->cli_pin));
       def("rcli_mode", _parent->rcli_mode);
       def("rcli_fav", _parent->rcli_fav);
+#ifdef WITH_WIFI_SWITCHING
+      def("comms", _parent->comms_mode);
+      def("wifi2_ssid", _parent->wifi_ssid_x[0], sizeof(_parent->wifi_ssid_x[0]));
+      def("wifi2_pwd",  _parent->wifi_pwd_x[0],  sizeof(_parent->wifi_pwd_x[0]));
+      def("wifi3_ssid", _parent->wifi_ssid_x[1], sizeof(_parent->wifi_ssid_x[1]));
+      def("wifi3_pwd",  _parent->wifi_pwd_x[1],  sizeof(_parent->wifi_pwd_x[1]));
+      def("wifi4_ssid", _parent->wifi_ssid_x[2], sizeof(_parent->wifi_ssid_x[2]));
+      def("wifi4_pwd",  _parent->wifi_pwd_x[2],  sizeof(_parent->wifi_pwd_x[2]));
+      def("wifi5_ssid", _parent->wifi_ssid_x[3], sizeof(_parent->wifi_ssid_x[3]));
+      def("wifi5_pwd",  _parent->wifi_pwd_x[3],  sizeof(_parent->wifi_pwd_x[3]));
+      def("ip_mode", _parent->wifi_ip_mode);
+      def("ip_addr", _parent->wifi_ip, sizeof(_parent->wifi_ip));
+      def("ip_gw",   _parent->wifi_gw, sizeof(_parent->wifi_gw));
+      def("ip_mask", _parent->wifi_mask, sizeof(_parent->wifi_mask));
+      def("tcp_port", _parent->wifi_port);
+#endif
     }
   public:
     SouthPrefs(NodePrefs* parent) : _parent(parent) { }
@@ -398,6 +427,11 @@ public:
     bridge_secret[0] = 0;
     owner_info[0] = 0;
     cli_pin[0] = 0;
+#ifdef WITH_WIFI_SWITCHING
+    memset(wifi_ssid_x, 0, sizeof(wifi_ssid_x));
+    memset(wifi_pwd_x, 0, sizeof(wifi_pwd_x));
+    wifi_ip[0] = wifi_gw[0] = wifi_mask[0] = 0;
+#endif
     default_scope_name[0] = 0;
     memset(default_scope_key, 0, sizeof(default_scope_key));
     memset(extra_sf, 0, sizeof(extra_sf));

@@ -16,6 +16,12 @@ void SerialWifiInterface::enable() {
 
 void SerialWifiInterface::disable() {
   _isEnabled = false;
+  // A disabled transport must not keep an app attached: drop the TCP client, or
+  // it would still count as connected with nobody reading or writing it.
+  if (deviceConnected || client) {
+    deviceConnected = false;
+    client.stop();
+  }
 }
 
 size_t SerialWifiInterface::writeFrame(const uint8_t src[], size_t len) {

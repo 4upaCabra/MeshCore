@@ -3476,6 +3476,10 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     command += 3;
   }
 
+#ifdef WITH_WIFI_SWITCHING
+  if (memcmp(command, "set wifi.", 9) == 0 && handleUniWifiSet(command, reply)) return true;
+#endif
+
   if (_prefs.getRadioPrefs()->handleCommand(command, sender_timestamp, reply)) {  // is radio CLI command?
     if (_prefs.getRadioPrefs()->isDirty()) { savePrefs(); }
     return true;
@@ -3894,9 +3898,6 @@ void MyMesh::loop() {
     }
   }
 
-#ifdef WITH_WIFI_SWITCHING
-  checkWifiConnection();
-#endif
 
   if (_cli_rescue) {
     checkCLIRescueCmd();
@@ -4520,8 +4521,8 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
       int n = 0;
       for (int i = 0; i < n_found && n < 500; i++)
         n += snprintf(buf + n, 512 - n, "%s (%d dBm)\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
-      WiFi.scanDelete();
     }
+    wifiScanDone();
 
   } else if (strncmp(cmd, "wifi add ", 9) == 0) {
     char ssid[33] = {}, pass[65] = {};
@@ -4592,7 +4593,7 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     if (port > 0 && port < 65536) {
       _wifi_prefs.tcp_port = (uint16_t)port;
       saveWifiPrefs();
-      snprintf(buf, 512, "wifi port: %d", port);
+      snprintf(buf, 512, "wifi port: %d (reboot to apply)", port);
     } else {
       strcpy(buf, "Usage: wifi port <1-65535>");
     }
@@ -4607,9 +4608,9 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     }
 
   } else if (strcmp(cmd, "wifi status") == 0) {
-    const char* mode_str = (_wifi_prefs.comms_mode == COMMS_MODE_WIFI) ? "WiFi"
+    const char* mode_str = (_wifi_prefs.comms_mode == COMMS_MODE_WIFI) ? "BLE+WiFi"
                          : (_wifi_prefs.comms_mode == COMMS_MODE_USB)  ? "USB" : "BLE";
-    if (_wifi_connecting) {
+    if (isWifiConnecting()) {
       snprintf(buf, 512, "comms: %s (connecting...)", mode_str);
     } else if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI && WiFi.status() == WL_CONNECTED) {
       snprintf(buf, 512, "comms: WiFi  ip: %s  port: %u",
@@ -5279,23 +5280,63 @@ void MyMesh::setFramedPacketsEnabled(bool enabled) {
 
 #ifdef WITH_WIFI_SWITCHING
 
-void MyMesh::loadWifiPrefs() {
+void MyMesh::wifiPrefsFromNodePrefs() {
   memset(&_wifi_prefs, 0, sizeof(_wifi_prefs));
-  _wifi_prefs.tcp_port = WIFI_TCP_PORT_DEFAULT;
+  _wifi_prefs.comms_mode = _prefs.comms_mode <= COMMS_MODE_USB ? _prefs.comms_mode : COMMS_MODE_BLE;
+  int n = 0;
+  if (_prefs.wifi_ssid[0]) {
+    StrHelper::strncpy(_wifi_prefs.networks[n].ssid, _prefs.wifi_ssid, sizeof(_wifi_prefs.networks[n].ssid));
+    StrHelper::strncpy(_wifi_prefs.networks[n].password, _prefs.wifi_pwd, sizeof(_wifi_prefs.networks[n].password));
+    n++;
+  }
+  for (int i = 0; i < 4 && n < WIFI_MAX_NETWORKS; i++) {
+    if (!_prefs.wifi_ssid_x[i][0]) continue;
+    StrHelper::strncpy(_wifi_prefs.networks[n].ssid, _prefs.wifi_ssid_x[i], sizeof(_wifi_prefs.networks[n].ssid));
+    StrHelper::strncpy(_wifi_prefs.networks[n].password, _prefs.wifi_pwd_x[i], sizeof(_wifi_prefs.networks[n].password));
+    n++;
+  }
+  _wifi_prefs.network_count = n;
+  _wifi_prefs.ip_mode = _prefs.wifi_ip_mode;
+  StrHelper::strncpy(_wifi_prefs.static_ip, _prefs.wifi_ip, sizeof(_wifi_prefs.static_ip));
+  StrHelper::strncpy(_wifi_prefs.static_gw, _prefs.wifi_gw, sizeof(_wifi_prefs.static_gw));
+  StrHelper::strncpy(_wifi_prefs.static_mask, _prefs.wifi_mask, sizeof(_wifi_prefs.static_mask));
+  _wifi_prefs.tcp_port = _prefs.wifi_port ? _prefs.wifi_port : WIFI_TCP_PORT_DEFAULT;
+}
+
+void MyMesh::loadWifiPrefs() {
+  // Up to 1.17 the uni settings were a binary /wifi_prefs file: move them into
+  // the prefs once and drop the file.
   File file = SPIFFS.open("/wifi_prefs", "r");
   if (file) {
-    file.read((uint8_t*)&_wifi_prefs, min((size_t)file.size(), sizeof(_wifi_prefs)));
+    WifiPrefs old;
+    memset(&old, 0, sizeof(old));
+    file.read((uint8_t*)&old, min((size_t)file.size(), sizeof(old)));
     file.close();
+    if (old.network_count > WIFI_MAX_NETWORKS) old.network_count = 0;
+    memcpy(&_wifi_prefs, &old, sizeof(old));
+    saveWifiPrefs();
+    SPIFFS.remove("/wifi_prefs");
   }
-  if (_wifi_prefs.tcp_port == 0) _wifi_prefs.tcp_port = WIFI_TCP_PORT_DEFAULT;
+  wifiPrefsFromNodePrefs();
 }
 
 void MyMesh::saveWifiPrefs() {
-  File file = SPIFFS.open("/wifi_prefs", "w");
-  if (file) {
-    file.write((uint8_t*)&_wifi_prefs, sizeof(_wifi_prefs));
-    file.close();
+  const WifiNetwork* nets = _wifi_prefs.networks;
+  const int n = _wifi_prefs.network_count;
+  StrHelper::strncpy(_prefs.wifi_ssid, n > 0 ? nets[0].ssid : "", sizeof(_prefs.wifi_ssid));
+  StrHelper::strncpy(_prefs.wifi_pwd, n > 0 ? nets[0].password : "", sizeof(_prefs.wifi_pwd));
+  for (int i = 0; i < 4; i++) {
+    StrHelper::strncpy(_prefs.wifi_ssid_x[i], i + 1 < n ? nets[i + 1].ssid : "", sizeof(_prefs.wifi_ssid_x[i]));
+    StrHelper::strncpy(_prefs.wifi_pwd_x[i], i + 1 < n ? nets[i + 1].password : "", sizeof(_prefs.wifi_pwd_x[i]));
   }
+  _prefs.comms_mode = _wifi_prefs.comms_mode;
+  _prefs.wifi_enabled = _wifi_prefs.comms_mode == COMMS_MODE_WIFI ? 1 : 0;
+  _prefs.wifi_ip_mode = _wifi_prefs.ip_mode;
+  StrHelper::strncpy(_prefs.wifi_ip, _wifi_prefs.static_ip, sizeof(_prefs.wifi_ip));
+  StrHelper::strncpy(_prefs.wifi_gw, _wifi_prefs.static_gw, sizeof(_prefs.wifi_gw));
+  StrHelper::strncpy(_prefs.wifi_mask, _wifi_prefs.static_mask, sizeof(_prefs.wifi_mask));
+  _prefs.wifi_port = _wifi_prefs.tcp_port == WIFI_TCP_PORT_DEFAULT ? 0 : _wifi_prefs.tcp_port;
+  savePrefs();
 }
 
 void MyMesh::addWifiNetwork(const char* ssid, const char* pass) {
@@ -5331,76 +5372,70 @@ void MyMesh::switchCommsMode(uint8_t mode, int wifi_net_idx) {
 #ifdef WITH_COMPANION_FRAME_FRAGMENTS
   resetFragmentSession();
 #endif
-  if (_serial) _serial->disable();
-
+  if (mode > COMMS_MODE_USB) mode = COMMS_MODE_BLE;
+  if (mode == COMMS_MODE_WIFI && _wifi_prefs.network_count == 0) mode = COMMS_MODE_BLE;
+  // The chosen network goes first: that is the one the transport joins.
+  if (mode == COMMS_MODE_WIFI && wifi_net_idx > 0 && wifi_net_idx < _wifi_prefs.network_count) {
+    WifiNetwork chosen = _wifi_prefs.networks[wifi_net_idx];
+    for (int i = wifi_net_idx; i > 0; i--) _wifi_prefs.networks[i] = _wifi_prefs.networks[i - 1];
+    _wifi_prefs.networks[0] = chosen;
+  }
   _wifi_prefs.comms_mode = mode;
   saveWifiPrefs();
-
-  if (mode == COMMS_MODE_WIFI && wifi_net_idx >= 0
-      && wifi_net_idx < _wifi_prefs.network_count) {
-    _wifi_net_idx = wifi_net_idx;
-    _wifi_connecting = true;
-    _wifi_connect_start = millis();
-    WiFi.begin(_wifi_prefs.networks[wifi_net_idx].ssid,
-               _wifi_prefs.networks[wifi_net_idx].password);
-    // Keep BLE active as fallback during connection attempt
-    _serial = &_ble_iface;
-    _serial->enable();
-  } else if (mode == COMMS_MODE_USB) {
-    WiFi.disconnect(true);
-    _serial = nullptr;  // USB is managed externally
-  } else {
-    // BLE — explicit user switch: cancel background retry, shut down WiFi
-    _wifi_bg_retry_at = 0;
-    WiFi.disconnect(true);
-    _wifi_prefs.comms_mode = COMMS_MODE_BLE;
-    saveWifiPrefs();
-    _serial = &_ble_iface;
-    _serial->enable();
-  }
+  _wifi_attempt_start = millis();
+  if (_comms_hook) _comms_hook(mode);
 }
 
-void MyMesh::checkWifiConnection() {
-  // Background retry: reconnect to WiFi every 30 sec after fallback to BLE
-  if (!_wifi_connecting && _wifi_bg_retry_at && millis() >= _wifi_bg_retry_at) {
-    _wifi_bg_retry_at = 0;
-    if (_wifi_net_idx >= 0 && _wifi_net_idx < _wifi_prefs.network_count) {
-      _wifi_connecting = true;
-      _wifi_connect_start = millis();
-      WiFi.begin(_wifi_prefs.networks[_wifi_net_idx].ssid,
-                 _wifi_prefs.networks[_wifi_net_idx].password);
+// Upstream's wifi.* setters, on the uni model: network 1 is upstream's
+// wifi.ssid / wifi.pwd, and WiFi runs when the transport mode says so. Here, not
+// in runCliChain, so the app's CLI frame and the rescue CLI get it too.
+bool MyMesh::handleUniWifiSet(const char* command, char* reply) {
+  WifiNetwork* n0 = &_wifi_prefs.networks[0];
+  if (memcmp(command, "set wifi.ssid ", 14) == 0) {
+    if (_wifi_prefs.network_count == 0) {
+      memset(n0, 0, sizeof(*n0));
+      _wifi_prefs.network_count = 1;
     }
-  }
-
-  if (!_wifi_connecting) return;
-
-  if (WiFi.status() == WL_CONNECTED) {
-    _wifi_connecting = false;
-    if (_wifi_prefs.ip_mode == IP_MODE_STATIC) {
-      IPAddress ip, gw, mask;
-      ip.fromString(_wifi_prefs.static_ip);
-      gw.fromString(_wifi_prefs.static_gw);
-      mask.fromString(_wifi_prefs.static_mask);
-      WiFi.config(ip, gw, mask);
-    }
-    board.setInhibitSleep(true);
-    uint16_t port = _wifi_prefs.tcp_port ? _wifi_prefs.tcp_port : WIFI_TCP_PORT_DEFAULT;
-    if (_serial) _serial->disable();
-    _wifi_iface.begin(port);
-    _serial = &_wifi_iface;
-    _serial->enable();
-    if (_wifi_prefs.comms_mode != COMMS_MODE_WIFI) {
-      _wifi_prefs.comms_mode = COMMS_MODE_WIFI;
-      saveWifiPrefs();
-    }
-  } else if (millis() - _wifi_connect_start > 15000) {
-    _wifi_connecting = false;
-    _wifi_prefs.comms_mode = COMMS_MODE_BLE;
+    StrHelper::strncpy(n0->ssid, &command[14], sizeof(n0->ssid));
     saveWifiPrefs();
-    WiFi.disconnect(false);  // keep radio on for background retry
-    _wifi_bg_retry_at = millis() + 30000;
-    // _serial already points to _ble_iface (set in switchCommsMode)
+    sprintf(reply, "> wifi.ssid is now %s (set wifi.pwd too)", n0->ssid);
+    return true;
   }
+  if (memcmp(command, "set wifi.pwd ", 13) == 0) {
+    if (_wifi_prefs.network_count == 0) {
+      strcpy(reply, "Error: set wifi.ssid first");
+      return true;
+    }
+    StrHelper::strncpy(n0->password, &command[13], sizeof(n0->password));
+    saveWifiPrefs();
+    if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI) switchCommsMode(COMMS_MODE_WIFI, 0);   // rejoin
+    strcpy(reply, "> wifi.pwd updated");
+    return true;
+  }
+  if (strcmp(command, "set wifi.clear") == 0) {
+    if (_wifi_prefs.network_count > 0) removeWifiNetwork(n0->ssid);
+    if (_wifi_prefs.network_count == 0 && _wifi_prefs.comms_mode == COMMS_MODE_WIFI) {
+      switchCommsMode(COMMS_MODE_BLE);
+    }
+    strcpy(reply, "> wifi network 1 cleared");
+    return true;
+  }
+  if (memcmp(command, "set wifi.enabled ", 17) == 0) {
+    bool on = atoi(&command[17]) != 0;
+    if (on && _wifi_prefs.network_count == 0) {
+      strcpy(reply, "Error: no network, set wifi.ssid first");
+      return true;
+    }
+    switchCommsMode(on ? COMMS_MODE_WIFI : COMMS_MODE_BLE);
+    sprintf(reply, "> wifi.enabled is now %d", on ? 1 : 0);
+    return true;
+  }
+  return false;
+}
+
+void MyMesh::wifiScanDone() {
+  WiFi.scanDelete();
+  if (_wifi_prefs.comms_mode != COMMS_MODE_WIFI) WiFi.mode(WIFI_OFF);
 }
 
 void MyMesh::initCommsFromPrefs() {
@@ -5414,18 +5449,7 @@ void MyMesh::initCommsFromPrefs() {
       // auto mode: new random each boot, not persisted
     }
   }
-  _ble_iface.begin(blePrefixEnabled(&_prefs) ? BLE_NAME_PREFIX : "", _prefs.node_name, _active_ble_pin);
-  if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI && _wifi_prefs.network_count > 0) {
-    // Start async WiFi; use BLE as fallback during connection
-    _wifi_net_idx = 0;
-    _wifi_connecting = true;
-    _wifi_connect_start = millis();
-    WiFi.begin(_wifi_prefs.networks[0].ssid, _wifi_prefs.networks[0].password);
-    startInterface(_ble_iface);
-  } else {
-    // BLE or USB: start BLE as default
-    startInterface(_ble_iface);
-  }
+  _wifi_attempt_start = millis();
 }
 
 #endif  // WITH_WIFI_SWITCHING

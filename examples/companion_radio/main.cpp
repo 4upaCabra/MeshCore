@@ -68,7 +68,7 @@
   // WITH_WIFI_SWITCHING is not in the list: there the transport is chosen at runtime,
   // so light sleep stays configured and esp32_pm_wantsAwake() holds the lock while
   // the active transport is WiFi or USB.
-  #if defined(WIFI_SSID) || defined(ENABLE_USB_INTERFACE) || defined(SERIAL_RX) || defined(ETHERNET_ENABLED)
+  #if defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING)) || defined(SERIAL_RX) || defined(ETHERNET_ENABLED)
     // The transport itself is WiFi, USB, UART or Ethernet: sleeping breaks the link,
     // not just the log.
     #define ESP32_PM_LIGHT_SLEEP   0
@@ -96,10 +96,8 @@ static uint32_t _atoi(const char* sp) {
 #include <helpers/MultiSerialInterface.h>
 MultiSerialInterface interface_manager;
 
-// include bluetooth interface
-// (not with WITH_WIFI_SWITCHING: there MyMesh owns its own BLE and WiFi interfaces,
-// and a second SerialBLEInterface would initialise the BLE stack twice)
-#if defined(BLE_PIN_CODE) && !defined(WITH_WIFI_SWITCHING)
+// include bluetooth interface (uni builds have no BLE_PIN_CODE: the PIN comes from prefs)
+#if defined(BLE_PIN_CODE) || defined(WITH_WIFI_SWITCHING)
   #ifdef ESP32
     // include esp32 bluetooth interface
     #include <helpers/esp32/SerialBLEInterface.h>
@@ -147,7 +145,10 @@ MultiSerialInterface interface_manager;
 #endif
 
 // include usb interface
-#if defined(ENABLE_USB_INTERFACE)
+#if defined(ENABLE_USB_INTERFACE) && defined(WITH_WIFI_SWITCHING)
+  #include "UsbLinkInterface.h"
+  UsbLinkInterface usb_serial_interface;
+#elif defined(ENABLE_USB_INTERFACE)
   #include <helpers/ArduinoSerialInterface.h>
   ArduinoSerialInterface usb_serial_interface;
 #endif
@@ -206,6 +207,9 @@ void halt() {
 }
 
 /* WIFI RECONNECT TRACKERS */
+#ifdef WITH_WIFI_SWITCHING
+static void uniApplyCommsMode(uint8_t mode);
+#endif
 #ifdef ENABLE_WIFI_INTERFACE
   bool wifi_needs_reconnect = false;
   unsigned long last_wifi_reconnect_attempt = 0;
@@ -213,6 +217,50 @@ void halt() {
   char wifi_pwd[64] = WIFI_PWD;
   bool wifi_was_connected = false;
   bool wifi_enabled = false;   // set at boot from prefs; false also when the effective SSID is blank
+#endif
+
+#ifdef WITH_WIFI_SWITCHING
+// uni transport modes: BLE alone (the chip may sleep), BLE and WiFi together,
+// or USB alone. Every transport stays registered in interface_manager; the mode
+// only enables and disables them, so a change needs no reboot.
+static void uniApplyCommsMode(uint8_t mode) {
+  const bool wifi = mode == COMMS_MODE_WIFI;
+  const bool usb = mode == COMMS_MODE_USB;
+  WifiPrefs* wp = the_mesh.getWifiPrefs();
+
+  if (usb) bluetooth_interface.disable();
+  else     bluetooth_interface.enable();
+
+  if (wifi && wp->network_count > 0) {
+    StrHelper::strncpy(wifi_ssid, wp->networks[0].ssid, sizeof(wifi_ssid));
+    StrHelper::strncpy(wifi_pwd, wp->networks[0].password, sizeof(wifi_pwd));
+    WiFi.mode(WIFI_STA);
+    wifi_interface.begin(wp->tcp_port);   // no-op once listening; a new port needs a reboot
+    if (wp->ip_mode == IP_MODE_STATIC) {
+      IPAddress ip, gw, mask;
+      ip.fromString(wp->static_ip);
+      gw.fromString(wp->static_gw);
+      mask.fromString(wp->static_mask);
+      WiFi.config(ip, gw, mask);
+    } else {
+      WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);   // back to DHCP after a static IP
+    }
+    WiFi.begin(wifi_ssid, wifi_pwd);
+    last_wifi_reconnect_attempt = millis();
+    wifi_interface.enable();
+    wifi_enabled = true;
+  } else {
+    wifi_enabled = false;
+    wifi_interface.disable();
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  }
+
+  if (usb) usb_serial_interface.enable();
+  else     usb_serial_interface.disable();
+
+  board.setInhibitSleep(wifi || usb);
+}
 #endif
 
 #if defined(ESP32) && defined(WITH_ESP32_POWER_SAVING)
@@ -528,8 +576,12 @@ void setup() {
   the_mesh.setBLEPin(0);
 #endif
 
+#ifdef WITH_WIFI_SWITCHING
+  the_mesh.initCommsFromPrefs();   // uni: transport settings and the BLE PIN
+#endif
+
 // add bluetooth interface
-#if defined(BLE_PIN_CODE) && !defined(WITH_WIFI_SWITCHING)
+#if defined(BLE_PIN_CODE) || defined(WITH_WIFI_SWITCHING)
   bluetooth_interface.begin(blePrefixEnabled(the_mesh.getNodePrefs()) ? BLE_NAME_PREFIX : "",
                             the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
   interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
@@ -544,7 +596,24 @@ void setup() {
   }
   // only start wifi if enabled and ssid is not empty
   wifi_enabled = the_mesh.getNodePrefs()->wifi_enabled;
+#ifdef WITH_WIFI_SWITCHING
+  // uni: the interface is always registered; the mode turns WiFi on and off
+  // at runtime (uniApplyCommsMode below), not only at boot.
+  // The TCP server starts in uniApplyCommsMode(), once WiFi is up: before the
+  // first WiFi.mode() the TCP/IP stack does not exist and opening a socket aborts.
+  interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
+  WiFi.setAutoReconnect(true);
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
+      if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+          wifi_needs_reconnect = true;
+      } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+          wifi_needs_reconnect = false;
+      }
+  });
+  if (false) {
+#else
   if (wifi_enabled && wifi_ssid[0]) {
+#endif
 #if defined(ESP32)
     board.setInhibitSleep(true);   // prevent sleep when WiFi is active
     WiFi.setAutoReconnect(true);
@@ -599,14 +668,10 @@ void setup() {
   interface_manager.addInterface(InterfaceType::HardwareSerial, &hardware_serial_interface);
 #endif
 
-#ifdef WITH_WIFI_SWITCHING
-  // MyMesh picks the transport itself: it loads /wifi_prefs, brings up its own BLE,
-  // starts WiFi if that was the saved mode, and switches between them at runtime.
-  // Going through interface_manager instead would leave the uni build with no
-  // transport at all — nothing registers there when BLE_PIN_CODE is not set.
-  the_mesh.initCommsFromPrefs();
-#else
   the_mesh.startInterface(interface_manager);
+#ifdef WITH_WIFI_SWITCHING
+  the_mesh.setCommsHook(uniApplyCommsMode);
+  uniApplyCommsMode(the_mesh.getWifiPrefs()->comms_mode);
 #endif
   sensors.begin();
 

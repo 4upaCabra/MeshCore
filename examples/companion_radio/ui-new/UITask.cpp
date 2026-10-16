@@ -1015,7 +1015,7 @@ public:
 #endif
       } else if (the_mesh.getBLEPin() != 0) {
 #ifdef WITH_WIFI_SWITCHING
-        if (the_mesh.getWifiPrefs()->comms_mode != COMMS_MODE_WIFI)
+        if (the_mesh.getWifiPrefs()->comms_mode != COMMS_MODE_USB)   // BLE runs alongside WiFi
 #endif
         {
           display.setColor(UIColor::warning_txt);
@@ -1511,7 +1511,7 @@ public:
           if (_wifi_sel < _wifi_scan_scroll) _wifi_scan_scroll = _wifi_sel;
           if (_wifi_sel >= _wifi_scan_scroll + 3) _wifi_scan_scroll = _wifi_sel - 2;
         } else if (c == KEY_LEFT || c == KEY_PREV) {
-          WiFi.scanDelete(); _wifi_scan_n = -1;
+          the_mesh.wifiScanDone(); _wifi_scan_n = -1;
           _in_wifi_select = false;
         } else if (c == KEY_ENTER) {
           if (_wifi_sel < S) {
@@ -1535,7 +1535,7 @@ public:
             the_mesh.switchCommsMode(COMMS_MODE_USB);
             _in_wifi_select = false;
           } else {
-            WiFi.scanDelete(); _wifi_scan_n = -1;
+            the_mesh.wifiScanDone(); _wifi_scan_n = -1;
             _in_wifi_select = false;
           }
         }
