@@ -50,7 +50,6 @@ protected:
   void configureVoltageWake(uint8_t ain_channel, uint8_t refsel);
   void configureLowVoltageAlert(uint8_t ain_channel, uint8_t low_refsel);
   void pwrmgtWakeArmVbus();
-  virtual void initiateShutdown(uint8_t reason);
 #endif
 
 public:

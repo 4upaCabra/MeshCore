@@ -4142,6 +4142,38 @@ int MyMesh::mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped
   return 0;
 }
 
+// Lower-case the command verb (and subcommand for multi-word prefixes like
+// get/set/clock/timesync/clear/wifi/help) while preserving the case of
+// any arguments that follow.
+static void normalizeCliCommand(char* buf) {
+  if (!buf || !*buf) return;
+  // skip leading spaces
+  char* p = buf;
+  while (*p == ' ') p++;
+  // lowercase the first word (command verb)
+  char* wordStart = p;
+  while (*p && *p != ' ') { *p = tolower((unsigned char)*p); p++; }
+  if (!*p) return;  // single-word command, done
+  // Check if the verb is one that takes a subcommand
+  size_t verbLen = p - wordStart;
+  static const char* const multiWordVerbs[] = {
+    "get", "set", "clock", "timesync", "clear", "wifi", "help"
+  };
+  bool hasSubCmd = false;
+  for (size_t i = 0; i < sizeof(multiWordVerbs) / sizeof(multiWordVerbs[0]); i++) {
+    if (verbLen == strlen(multiWordVerbs[i]) && memcmp(wordStart, multiWordVerbs[i], verbLen) == 0) {
+      hasSubCmd = true;
+      break;
+    }
+  }
+  if (!hasSubCmd) return;  // no subcommand to lowercase
+  // skip spaces between verb and subcommand
+  while (*p == ' ') p++;
+  // lowercase the subcommand (second word)
+  while (*p && *p != ' ') { *p = tolower((unsigned char)*p); p++; }
+  // everything after the subcommand keeps its original case
+}
+
 #ifdef WITH_COMPANION_CLI
 
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
@@ -4567,37 +4599,6 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   return true;
 }
 
-// Lower-case the command verb (and subcommand for multi-word prefixes like
-// get/set/clock/timesync/clear/wifi/help) while preserving the case of
-// any arguments that follow.
-static void normalizeCliCommand(char* buf) {
-  if (!buf || !*buf) return;
-  // skip leading spaces
-  char* p = buf;
-  while (*p == ' ') p++;
-  // lowercase the first word (command verb)
-  char* wordStart = p;
-  while (*p && *p != ' ') { *p = tolower((unsigned char)*p); p++; }
-  if (!*p) return;  // single-word command, done
-  // Check if the verb is one that takes a subcommand
-  size_t verbLen = p - wordStart;
-  static const char* const multiWordVerbs[] = {
-    "get", "set", "clock", "timesync", "clear", "wifi", "help"
-  };
-  bool hasSubCmd = false;
-  for (size_t i = 0; i < sizeof(multiWordVerbs) / sizeof(multiWordVerbs[0]); i++) {
-    if (verbLen == strlen(multiWordVerbs[i]) && memcmp(wordStart, multiWordVerbs[i], verbLen) == 0) {
-      hasSubCmd = true;
-      break;
-    }
-  }
-  if (!hasSubCmd) return;  // no subcommand to lowercase
-  // skip spaces between verb and subcommand
-  while (*p == ' ') p++;
-  // lowercase the subcommand (second word)
-  while (*p && *p != ' ') { *p = tolower((unsigned char)*p); p++; }
-  // everything after the subcommand keeps its original case
-}
 
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
   char from_hex[9];
