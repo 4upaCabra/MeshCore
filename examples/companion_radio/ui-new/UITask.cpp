@@ -228,8 +228,7 @@ class HomeScreen : public UIScreen {
     DISP,
     COMMS,
     SYSTEM,
-    CODECS,
-    EXT        // UI_FOLDER_EXTENSION: the build's own folder
+    CODECS
   };
   SettingsPage _settings_page = SettingsPage::ROOT;
 
@@ -400,13 +399,12 @@ public:
 
   int settingsPageItemCount(SettingsPage page) const {
     switch (page) {
-      case SettingsPage::ROOT:    return 6;
+      case SettingsPage::ROOT:    return 5;
       case SettingsPage::CHAT:    return 6;
       case SettingsPage::DISP:    return 4 + extraCount(UI_FOLDER_DISPLAY);
       case SettingsPage::COMMS:   return 5 + extraCount(UI_FOLDER_CONNECTION);
       case SettingsPage::SYSTEM:  return 4;
       case SettingsPage::CODECS:  return 5;
-      case SettingsPage::EXT:     return 1 + extraCount(UI_FOLDER_EXTENSION);
     }
     return 0;
   }
@@ -417,13 +415,6 @@ public:
       if (i == 2) {   // Connection: shown when anything in it is
         for (int j = 1; j < settingsPageItemCount(SettingsPage::COMMS); j++) {
           if (!isSettingHidden(SettingsPage::COMMS, j)) return false;
-        }
-        return true;
-      }
-      if (i == 4) {   // the build's own folder: named, and something in it shown
-        if (!uiExtensionFolderLabel()) return true;
-        for (int j = 1; j < settingsPageItemCount(SettingsPage::EXT); j++) {
-          if (!isSettingHidden(SettingsPage::EXT, j)) return false;
         }
         return true;
       }
@@ -451,8 +442,6 @@ public:
       if (i == 3) return true;   // no BLE in this build: nothing to name
 #endif
       if (i >= 5) return extraHidden(UI_FOLDER_CONNECTION, i - 5, d);
-    } else if (page == SettingsPage::EXT) {
-      if (i >= 1) return extraHidden(UI_FOLDER_EXTENSION, i - 1, d);
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1) {
 #if !defined(WITH_ESP32_POWER_SAVING) || defined(WIFI_SSID) || (defined(ENABLE_USB_INTERFACE) && !defined(WITH_WIFI_SWITCHING))
@@ -470,20 +459,9 @@ public:
       if (i == 1) return _TR("[ Display ]", "[ Экран ]");
       if (i == 2) return _TR("[ Connection ]", "[ Связь ]");
       if (i == 3) return _TR("[ System ]", "[ Система ]");
-      if (i == 4) {
-        static char ext_label[40];
-        const char* name = uiExtensionFolderLabel();
-        snprintf(ext_label, sizeof(ext_label), "[ %s ]", name ? name : "");
-        return ext_label;
-      }
-      if (i == 5) return _TR("[ Exit ]", "[ Выход ]");
+      if (i == 4) return _TR("[ Exit ]", "[ Выход ]");
     } else if (i == 0) {
       return _TR("< Back", "< Назад");
-    }
-
-    if (page == SettingsPage::EXT) {
-      const UIExtraSetting* e = extraAt(UI_FOLDER_EXTENSION, i - 1);
-      return (e && e->label) ? e->label() : "";
     }
 
     if (page == SettingsPage::CHAT) {
@@ -574,12 +552,6 @@ public:
       return true;
     }
 
-    if (page == SettingsPage::EXT) {
-      const UIExtraSetting* e = extraAt(UI_FOLDER_EXTENSION, i - 1);
-      if (e && e->value) e->value(val, val_len);
-      return true;
-    }
-
     if (page == SettingsPage::COMMS) {
       if (i == 1) {
 #ifdef WITH_WIFI_SWITCHING
@@ -655,8 +627,7 @@ public:
       else if (i == 1) { _settings_page = SettingsPage::DISP; }
       else if (i == 2) { _settings_page = SettingsPage::COMMS; }
       else if (i == 3) { _settings_page = SettingsPage::SYSTEM; }
-      else if (i == 4) { _settings_page = SettingsPage::EXT; }
-      else if (i == 5) { _in_settings = false; return; }
+      else if (i == 4) { _in_settings = false; return; }
       _settings_sel = 1;
       _settings_scroll = 0;
       while (_settings_sel < settingsPageItemCount(_settings_page) && isSettingHidden(_settings_page, _settings_sel)) {
@@ -677,15 +648,8 @@ public:
         else if (prev == SettingsPage::DISP) _settings_sel = 1;
         else if (prev == SettingsPage::COMMS) _settings_sel = 2;
         else if (prev == SettingsPage::SYSTEM) _settings_sel = 3;
-        else if (prev == SettingsPage::EXT) _settings_sel = 4;
         _settings_scroll = 0;
       }
-      return;
-    }
-
-    if (page == SettingsPage::EXT) {
-      const UIExtraSetting* e = extraAt(UI_FOLDER_EXTENSION, i - 1);
-      if (e && e->press) e->press(fwd);
       return;
     }
 
@@ -1596,7 +1560,6 @@ public:
           else if (prev == SettingsPage::DISP) _settings_sel = 1;
           else if (prev == SettingsPage::COMMS) _settings_sel = 2;
           else if (prev == SettingsPage::SYSTEM) _settings_sel = 3;
-          else if (prev == SettingsPage::EXT) _settings_sel = 4;
           _settings_scroll = 0;
         } else {
           _in_settings = false;

@@ -10,7 +10,6 @@ class NodePrefs;
 enum UISettingsFolder : uint8_t {
   UI_FOLDER_DISPLAY    = 0,
   UI_FOLDER_CONNECTION = 1,
-  UI_FOLDER_EXTENSION  = 2,   // a folder of the build's own, see uiExtensionFolderLabel()
 };
 
 struct UIExtraSetting {
@@ -23,10 +22,6 @@ struct UIExtraSetting {
 
 // Returns number of extra settings items. If items is non-null, sets *items to the array.
 int  uiExtraSettings(const UIExtraSetting** items);
-
-// Name of the UI_FOLDER_EXTENSION folder in the settings root. nullptr (the
-// default) hides the folder; so does a folder with nothing visible in it.
-const char* uiExtensionFolderLabel();
 
 // A full-screen view the build may open from one of its settings. While it is
 // active the home screen hands it the display and every key.

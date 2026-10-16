@@ -5,10 +5,6 @@ __attribute__((weak)) int uiExtraSettings(const UIExtraSetting** items) {
   return 0;
 }
 
-__attribute__((weak)) const char* uiExtensionFolderLabel() {
-  return nullptr;
-}
-
 __attribute__((weak)) bool uiOverlayActive() {
   return false;
 }
