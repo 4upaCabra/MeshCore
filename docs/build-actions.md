@@ -7,9 +7,9 @@
 складывает артефакты в `out/` с именами по конвенции GHA.
 
 ```powershell
-.\build-local.ps1 Heltec_v3_companion_radio_uni
-.\build-local.ps1 Heltec_v3_companion_radio_uni, Heltec_E213_companion_radio_uni
-.\build-local.ps1 -Envs Heltec_v3_companion_radio_uni -DisableDebug
+.\build-local.ps1 Heltec_v3_companion_radio_ble
+.\build-local.ps1 Heltec_v3_companion_radio_ble, Heltec_E213_companion_radio_ble
+.\build-local.ps1 -Envs Heltec_v3_companion_radio_ble -DisableDebug
 ```
 
 **Версия** берётся из последнего git-тега (`git describe --tags --abbrev=0`),
@@ -34,7 +34,7 @@
 | Вызов | Описание |
 |-------|----------|
 | `build.sh build-firmware <env> [env…]` | Собрать конкретные env |
-| `build.sh build-companion-firmwares` | Все `*_companion_radio_uni` |
+| `build.sh build-companion-firmwares` | Все `*_companion_radio_ble` |
 | `build.sh build-repeater-firmwares` | Все `*_repeater` |
 | `build.sh build-room-server-firmwares` | Все `*_room_server` |
 | `build.sh build-matching-firmwares <spec>` | Все env содержащие `<spec>` |
@@ -44,13 +44,13 @@
 
 ```bash
 build_companion_firmwares() {
-  build_all_firmwares_by_suffix "_companion_radio_uni"
+  get_companion_release_envs
 }
 ```
 
-Все companion-варианты унифицированы в суффикс `_companion_radio_uni`.
-Старые `_ble` / `_usb` / `_wifi` суффиксы не удалены из ini-файлов (для ручных сборок),
-но не собираются в CI.
+`_uni`-варианты влиты в апстримные `_ble`: одна сборка `<Board>_companion_radio_ble`
+несёт BLE + USB с выбором транспорта на ходу (WiFi добавляется там, где позволяет
+раздел приложения). Раздельные `_usb` / `_wifi` окружения апстрима сохранены.
 
 ---
 
@@ -60,7 +60,7 @@ build_companion_firmwares() {
 
 | Триггер | Поведение |
 |---------|-----------|
-| `push: tags: companion-*` | Полная сборка всех `_companion_radio_uni`, создаёт черновик релиза |
+| `push: tags: companion-*` | Полная сборка всех `_companion_radio_ble`, создаёт черновик релиза |
 | `workflow_dispatch` (без параметров) | То же что и при теге, без релиза |
 | `workflow_dispatch` + `envs` | Сборка только указанных env |
 
@@ -68,7 +68,7 @@ build_companion_firmwares() {
 
 | Параметр | Описание | Пример |
 |----------|----------|--------|
-| `envs` | Env через пробел (пусто = все `_companion_radio_uni`) | `ProMicro_companion_radio_ble RAK_4631_companion_radio_ble` |
+| `envs` | Env через пробел (пусто = все `_companion_radio_ble`) | `ProMicro_companion_radio_ble RAK_4631_companion_radio_ble` |
 | `version_tag` | Тег для версии прошивки (пусто = последний `companion-*` тег) | `companion-v1.15.0b9` |
 | `release_tag` | Добавить артефакты в существующий релиз (пусто = не загружать) | `companion-v1.15.0b9` |
 
@@ -94,7 +94,7 @@ build_companion_firmwares() {
 git tag -a companion-v1.15.0b10 -m "## What's new…"
 git push origin companion-v1.15.0b10
 ```
-→ CI соберёт все `_companion_radio_uni`, создаст черновик релиза.
+→ CI соберёт все `_companion_radio_ble`, создаст черновик релиза.
 
 **Добилдить NRF52 BLE варианты и добавить в существующий релиз:**
 ```
@@ -107,7 +107,7 @@ Actions → Build Companion Firmwares → Run workflow
 **Тестовая сборка без релиза:**
 ```
 Actions → Build Companion Firmwares → Run workflow
-  envs:        Heltec_v3_companion_radio_uni
+  envs:        Heltec_v3_companion_radio_ble
   version_tag: (пусто)
   release_tag: (пусто)
 ```

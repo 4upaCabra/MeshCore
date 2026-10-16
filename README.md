@@ -22,8 +22,9 @@ This fork extends MeshCore's **companion radio** firmware with features for real
 
 | Suffix | Transport | Platforms |
 |--------|-----------|-----------|
-| `_companion_radio_uni` | BLE + WiFi + USB (runtime switch) | ESP32 / ESP32-S3 |
-| `_companion_radio_ble` | BLE only | NRF52 (T114, ProMicro) |
+| `_companion_radio_ble` | BLE + USB (runtime switch), + WiFi where the app partition allows | ESP32 / ESP32-S3 / NRF52 |
+| `_companion_radio_usb` | USB only (kept from upstream) | ESP32 / NRF52 |
+| `_companion_radio_wifi` | WiFi only (kept from upstream) | ESP32 / ESP32-S3 |
 
 Pre-built binaries are attached to each [release tag](../../releases).
 

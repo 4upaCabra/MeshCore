@@ -212,12 +212,12 @@ build_repeater_firmwares() {
 
 }
 
-# uni images that do not fit the 1.25 MB app partition: their boards fall back
-# to the separate ble/usb images.
+# single companion (ble) images that do not fit the 1.25 MB app partition:
+# their boards fall back to the separate USB image.
 COMPANION_RELEASE_SKIP=(
-  "LilyGo_TBeam_1W_companion_radio_uni"
-  "ThinkNode_M5_companion_radio_uni"
-  "nibble_screen_connect_companion_radio_uni"
+  "LilyGo_TBeam_1W_companion_radio_ble"
+  "ThinkNode_M5_companion_radio_ble"
+  "nibble_screen_connect_companion_radio_ble"
 )
 
 # The companion images a release carries: one per board — the uni image (BLE,
