@@ -206,9 +206,8 @@ build_repeater_firmwares() {
 #  build_firmware "LilyGo_T3S3_sx1262_Repeater"
 #  build_firmware "RAK_4631_Repeater"
 
-  # build all repeater firmwares, and the _ps (ESP32 power saving) twins
+  # build all repeater firmwares (ESP32 power saving is built in where supported)
   build_all_firmwares_by_suffix "_repeater"
-  build_all_firmwares_by_suffix "_repeater_ps"
 
 }
 
@@ -275,9 +274,8 @@ build_room_server_firmwares() {
 #  build_firmware "Heltec_v3_room_server"
 #  build_firmware "RAK_4631_room_server"
 
-  # build all room server firmwares, and the _ps (ESP32 power saving) twins
+  # build all room server firmwares (ESP32 power saving is built in where supported)
   build_all_firmwares_by_suffix "_room_server"
-  build_all_firmwares_by_suffix "_room_server_ps"
 
 }
 
@@ -334,8 +332,6 @@ elif [[ $1 == "get-companion-firmwares-to-build" ]]; then
   get_companion_release_envs
 elif [[ $1 == "get-repeater-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_repeater"
-  get_pio_envs_ending_with_string "_repeater_ps"
 elif [[ $1 == "get-room-server-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_room_server"
-  get_pio_envs_ending_with_string "_room_server_ps"
 fi

@@ -109,7 +109,7 @@ get power
 ## Репитер
 
 Репитер на ESP32 с флагом `WITH_ESP32_POWER_SAVING` (сборка
-`Heltec_v3_repeater_ps`) спит так же, как компаньон: автоматический light sleep
+`Heltec_v3_repeater`) спит так же, как компаньон: автоматический light sleep
 через `esp_pm_configure()` (80/40 МГц) и уступка 50 мс idle-задаче в конце цикла,
 вместо ручного `board.sleep(30)`. Управляет сном тот же преф
 `powersaving_enabled` (`powersaving on|off`), применяемый без перезагрузки:
@@ -140,12 +140,12 @@ Light sleep разрешён только когда `Serial` — настоящ
 ### Общий модуль, room server и платы с нативным USB
 
 Авто-сон репитера вынесен в `src/helpers/esp32/ESP32AutoSleep.h`; им же
-пользуется room server (`Heltec_v3_room_server_ps`). На платах с нативным USB
+пользуется room server (`Heltec_v3_room_server`). На платах с нативным USB
 (v4, E213, E290, Wireless Paper, Tracker) сон тоже включён: пока USB-хост на линии
 (`(bool)USB` у TinyUSB, `Serial.isConnected()` у HWCDC), модуль держит
 `ESP_PM_NO_LIGHT_SLEEP` и `ESP_PM_APB_FREQ_MAX`, иначе консоль падает. Пробуждение
-по UART там не настраивается — консоль не UART. Окружения: `Heltec_WSL3_repeater_ps`,
-`heltec_v4[_r8][_tft]_repeater_ps`, `Heltec_E213/E290/Wireless_Paper/Wireless_Tracker_repeater_ps`.
+по UART там не настраивается — консоль не UART. Окружения: `Heltec_WSL3_repeater`,
+`heltec_v4[_r8][_tft]_repeater`, `Heltec_E213/E290/Wireless_Paper/Wireless_Tracker_repeater`.
 
 ## Измерено (Heltec v3, замер по USB через FNB58)
 
