@@ -55,12 +55,16 @@ class CustomSX1262 : public SX1262 {
   #endif
       // Hard-reset the radio chip before begin() to guarantee clean state.
       // Required when SPI bus is shared with display (display init may leave chip busy).
+      // Boards without a wired reset define P_LORA_RESET as RADIOLIB_NC (-1):
+      // pulsing that pin is an invalid-GPIO error at boot, and resets nothing.
       #ifdef P_LORA_RESET
+      if ((int)(P_LORA_RESET) >= 0) {
         pinMode(P_LORA_RESET, OUTPUT);
         digitalWrite(P_LORA_RESET, LOW);
         delay(10);
         digitalWrite(P_LORA_RESET, HIGH);
         delay(100);
+      }
       #endif
 
       int status = begin(LORA_FREQ, LORA_BW, LORA_SF, cr, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 16, tcxo, useRegulatorLDO);
