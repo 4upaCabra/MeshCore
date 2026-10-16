@@ -1518,9 +1518,8 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
       if (strcmp(cmdBuf, "logout") == 0) {
         rcliPeer(from)->session_until = 0;
         strcpy(out, "OK - logged out");
-      } else if (!handleCliCmd(sender_timestamp, cmdBuf, out, true)) {
-        if (_cli) _cli->handleCommand(sender_timestamp, cmdBuf, out);
-        else strcpy(out, "Unknown command");
+      } else {
+        runCliChain(sender_timestamp, cmdBuf, out, true);
       }
       strcpy(reply, prefix);
       char* r = reply + strlen(prefix);
@@ -4179,6 +4178,17 @@ static void normalizeCliCommand(char* buf) {
 
 #ifdef WITH_COMPANION_CLI
 
+// Every way into the companion CLI (PIN message, the app's CLI screen,
+// TerminalCLI) runs the same chain: our companion commands, then upstream's
+// companion CLI (radio prefs, board, name, pin, wifi, tz.offset), then the CLI
+// shared with the other roles. Upstream's commands come in with each merge.
+void MyMesh::runCliChain(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
+  if (handleCliCmd(sender_ts, cmd, buf, is_remote)) return;
+  if (handleCommand(cmd, sender_ts, buf)) return;
+  if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+  else      strcpy(buf, "ERR: CLI not initialized");
+}
+
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
   if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
     snprintf(buf, 512,
@@ -4301,17 +4311,6 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
       strcpy(buf, "ERR: use on or off");
     }
 
-  } else if (strcmp(cmd, "get tz.offset") == 0) {
-    snprintf(buf, 512, "tz.offset: %d", (int)_prefs.tz_offset);
-  } else if (strncmp(cmd, "set tz.offset ", 14) == 0) {
-    int tz = atoi(cmd + 14);
-    if (tz < -12 || tz > 14) {
-      strcpy(buf, "Error, must be from -12 to +14");
-    } else {
-      _prefs.tz_offset = (int8_t)tz;
-      savePrefs();
-      strcpy(buf, "OK");
-    }
 
   } else if (strcmp(cmd, "timesync") == 0) {
     _ts.buildReply(buf, 512, getRTCClock());
@@ -4747,9 +4746,8 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
     _pending_poweroff_deadline = futureMillis(30000);
     _app_drain_until = 0;   // fresh command: open a new drain window
     return;
-  } else if (!handleCliCmd(sender_ts, cmd, buf, true)) {
-    if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
-    else      strcpy(buf, "ERR: CLI not initialized");
+  } else {
+    runCliChain(sender_ts, cmd, buf, true);
   }
   MESH_DEBUG_PRINTLN("CLI/PM reply(%zu): '%s'", strlen(buf), buf);
   if (buf[0]) sendCliReplyPM(from, buf);
@@ -4779,9 +4777,8 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
     _pending_poweroff_at = futureMillis(500);
     _pending_poweroff_deadline = futureMillis(30000);
     _app_drain_until = 0;   // fresh command: open a new drain window
-  } else if (!handleCliCmd(sender_ts, cmd, buf, false)) {
-    if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
-    else      strcpy(buf, "ERR: CLI not initialized");
+  } else {
+    runCliChain(sender_ts, cmd, buf, false);
   }
   MESH_DEBUG_PRINTLN("CLI/Terminal reply(%zu): '%s'", strlen(buf), buf);
   if (buf[0]) sendCliReplyChannel(ch_idx, buf, mirror_ui_reply);

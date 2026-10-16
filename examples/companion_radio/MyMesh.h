@@ -741,6 +741,7 @@ private:
   void injectChannelMsg(uint8_t ch_idx, const char* sender_name, uint8_t path_len, int8_t snr_x4, uint32_t ts, const char* text);
   int  findTerminalCLIChannelIdx();
   bool handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
+  void runCliChain(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
