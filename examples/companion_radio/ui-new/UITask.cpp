@@ -13,11 +13,6 @@
   #include <WiFi.h>
 #endif
 
-// Power off on a flat battery (power_screens::batteryFlat()).
-#ifndef AUTO_SHUTDOWN_CONFIRM
-  #define AUTO_SHUTDOWN_CONFIRM  3
-#endif
-
 // How long a message that just came in stays on screen when the connected app
 // fetches it at once (Settings → MSG HOLD): reading it in the app is no reason
 // to pull it off the device's display a second after it appeared. Off = return

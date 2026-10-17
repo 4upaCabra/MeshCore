@@ -1,5 +1,6 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/LowBatteryGuard.h>
 #include "../MyMesh.h"
 #include "target.h"
 #include "u8g2_icons.h"
@@ -751,23 +752,23 @@ void UITask::loop() {
 #endif
 
   if (millis() > next_batt_chck) {
-    _cached_batt_mv = getBattMilliVolts();
-    const uint16_t shutdown_mv = _node_prefs ? _node_prefs->shutdown_mv : 0;
-    if (shutdown_mv > 0 && _cached_batt_mv > 0 && _cached_batt_mv < shutdown_mv) {
-      if(!board.isExternalPowered()) {
-        if (_display != NULL) {
-        _display->startFrame();
-        _display->setTextSize(2);
-        _display->drawTextCentered(_display->width() / 2, 6, "Low battery!");
-        _display->setTextSize(1);
-        _display->drawTextCentered(_display->width() / 2, 18, "Shutting down!");
-        _display->endFrame();
-        if (_display->isEink() == false) { delay(3000); }
-        }
-        shutdown();
-      }
-    }
+    _cached_batt_mv = getBattMilliVolts();   // for the screen
     next_batt_chck = millis() + 8000;
+  }
+  // Same counting as the other roles (helpers/LowBatteryGuard.h): one dip
+  // during a transmission must not power the node off.
+  static LowBatteryGuard low_batt_guard;
+  if (low_batt_guard.due(board, _node_prefs ? _node_prefs->shutdown_mv : 0)) {
+    if (_display != NULL) {
+      _display->startFrame();
+      _display->setTextSize(2);
+      _display->drawTextCentered(_display->width() / 2, 6, "Low battery!");
+      _display->setTextSize(1);
+      _display->drawTextCentered(_display->width() / 2, 18, "Shutting down!");
+      _display->endFrame();
+      if (_display->isEink() == false) { delay(3000); }
+    }
+    shutdown();
   }
 }
 

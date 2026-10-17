@@ -50,8 +50,7 @@ class UITask : public AbstractUITask {
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
-  unsigned long ui_started_at, next_batt_chck;
-  uint8_t _low_batt_count = 0;   // consecutive readings below the shutdown level
+  unsigned long ui_started_at;
   bool _low_battery_off = false; // shutdown() was called for a flat battery
   int next_backlight_btn_check = 0;
   bool _prev_usb_powered = false;
@@ -89,7 +88,7 @@ class UITask : public AbstractUITask {
 public:
 
   UITask(mesh::MainBoard* board, MultiSerialInterface* serial) : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
-    next_batt_chck = _next_refresh = 0;
+    _next_refresh = 0;
     ui_started_at = 0;
     curr = NULL;
   }
