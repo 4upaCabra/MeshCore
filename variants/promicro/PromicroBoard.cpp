@@ -12,6 +12,14 @@ const PowerMgtConfig power_config = {
   .lpcomp_low_refsel  = PWRMGT_LPCOMP_LOW_REFSEL,
 };
 
+void PromicroBoard::onShutdownMilliVoltsChanged(uint16_t mv) {
+  // LPCOMP is the runtime trigger; its reference stays board-specific.
+  (void)mv;
+  if (power_config.lpcomp_low_refsel) {
+    configureLowVoltageAlert(power_config.lpcomp_ain_channel, power_config.lpcomp_low_refsel);
+  }
+}
+
 void PromicroBoard::initiateShutdown(uint8_t reason) {
   // Flash LED briefly to indicate shutdown reason
   #if defined(PIN_LED)
@@ -78,12 +86,11 @@ void PromicroBoard::begin() {
 
     pinMode(SX126X_POWER_EN, OUTPUT);
 #ifdef NRF52_POWER_MANAGEMENT
-    // Battery sense is on D17 -> P0.31 -> AIN7. We hold boot until the cell
-    // is above the Li-ion protection threshold to avoid unstable startup.
-    checkBootVoltage(&power_config);
-    if (power_config.lpcomp_low_refsel) {
-      configureLowVoltageAlert(power_config.lpcomp_ain_channel, power_config.lpcomp_low_refsel);
-    }
+    // Initialise power management and sample the boot voltage for
+    // `get pwrmgt.bootmv`; the lockout and runtime LPCOMP alert are configured
+    // from the `shutdown_mv` pref before radio_init(), not here.
+    pwrmgtInit();
+    boot_voltage_mv = getBattMilliVolts();
 #endif
     digitalWrite(SX126X_POWER_EN, HIGH);
     delay(15);   // give sx1262 some time to power up

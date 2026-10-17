@@ -62,7 +62,11 @@ void SenseCapSolarBoard::begin() {
 #endif
 
 #ifdef NRF52_POWER_MANAGEMENT
-  checkBootVoltage(&power_config);
+  // Initialise power management and sample the boot voltage for
+  // `get pwrmgt.bootmv`; the lockout itself is enforced by the role before
+  // radio_init(), using the `shutdown_mv` preference.
+  pwrmgtInit();
+  boot_voltage_mv = getBattMilliVolts();
 #endif
 
   delay(10);   // give sx1262 some time to power up

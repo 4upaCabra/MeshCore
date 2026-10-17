@@ -36,8 +36,11 @@ void T096Board::begin() {
   NRF52Board::begin();
 
 #ifdef NRF52_POWER_MANAGEMENT
-  // Boot voltage protection check (may not return if voltage too low)
-  checkBootVoltage(&power_config);
+  // Initialise power management and sample the boot voltage for
+  // `get pwrmgt.bootmv`; the lockout itself is enforced by the role before
+  // radio_init(), using the `shutdown_mv` preference.
+  pwrmgtInit();
+  boot_voltage_mv = getBattMilliVolts();
 #endif
 
 #if defined(PIN_BOARD_SDA) && defined(PIN_BOARD_SCL)

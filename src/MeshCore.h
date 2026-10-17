@@ -93,6 +93,11 @@ public:
   virtual const char* getResetReasonString(uint32_t reason) { return "Not available"; }
   virtual uint8_t getShutdownReason() const { return 0; }
   virtual const char* getShutdownReasonString(uint8_t reason) { return "Not available"; }
+  // Battery threshold (mV) used both as the boot lockout and the runtime
+  // low-voltage shutdown; 0 disables both. No-op where unsupported.
+  virtual void setShutdownMilliVolts(uint16_t mv) { (void)mv; }
+  // Boot lockout check. Returns false only if the board has powered itself off.
+  virtual bool pwrmgtBootCheck() { return true; }
 
   virtual bool handleCommand(const char* command, uint32_t sender_timestamp, char* reply) { return false; }
 

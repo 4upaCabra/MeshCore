@@ -750,10 +750,10 @@ void UITask::loop() {
   vibration.loop();
 #endif
 
-#ifdef AUTO_SHUTDOWN_MILLIVOLTS
   if (millis() > next_batt_chck) {
     _cached_batt_mv = getBattMilliVolts();
-    if (_cached_batt_mv > 0 && _cached_batt_mv < AUTO_SHUTDOWN_MILLIVOLTS) {
+    const uint16_t shutdown_mv = _node_prefs ? _node_prefs->shutdown_mv : 0;
+    if (shutdown_mv > 0 && _cached_batt_mv > 0 && _cached_batt_mv < shutdown_mv) {
       if(!board.isExternalPowered()) {
         if (_display != NULL) {
         _display->startFrame();
@@ -769,12 +769,6 @@ void UITask::loop() {
     }
     next_batt_chck = millis() + 8000;
   }
-#else
-  if (_display != NULL && _display->isOn() && millis() >= next_batt_chck) {
-    _cached_batt_mv = getBattMilliVolts();
-    next_batt_chck = millis() + 8000;
-  }
-#endif
 }
 
 char UITask::checkDisplayOn(char c) {

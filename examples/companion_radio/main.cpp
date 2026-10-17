@@ -519,27 +519,9 @@ void setup() {
   }
 #endif
 
-  // A battery too flat to run is caught here, before the radio and the rest of
-  // the start-up draw their peak current: otherwise a nearly empty cell browns
-  // the board out during boot and it restarts in a loop, silently. Two
-  // readings apart, so one noisy sample does not turn the node off.
-  if (power_screens::batteryFlat(board.getBattMilliVolts(), board.isExternalPowered())) {
-    delay(200);
-    if (power_screens::batteryFlat(board.getBattMilliVolts(), board.isExternalPowered())) {
-#ifdef DISPLAY_CLASS
-      if (disp) power_screens::drawPowerOff(disp, true);
-#endif
-#if defined(NRF52_POWER_MANAGEMENT)
-      static_cast<NRF52Board&>(board).initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
-#endif
-      board.powerOff();
-    }
-  }
-
-  if (!radio_init()) { halt(); }
-
-  fast_rng.begin(radio_driver.getRngSeed());
-
+  // Mount the filesystem before the radio starts: the opt-in `shutdown_mv`
+  // threshold must be known before radio_init() draws its peak current, or a
+  // nearly flat cell browns out here and the node restarts in a boot loop.
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   InternalFS.begin();
   #if defined(QSPIFLASH)
@@ -554,19 +536,43 @@ void setup() {
       ExtraFS.begin();
   #endif
   #endif
-  store.begin();
-  the_mesh.begin();
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
-  store.begin();
-  the_mesh.begin();
 #elif defined(ESP32)
   SPIFFS.begin(true);
-  store.begin();
-  the_mesh.begin();
 #else
   #error "need to define filesystem"
 #endif
+
+  NodePrefs boot_prefs;
+  store.loadPrefs(boot_prefs);
+  board.setShutdownMilliVolts(boot_prefs.shutdown_mv);
+  // nRF52 power management initialises here and enforces the boot lockout.
+  if (!board.pwrmgtBootCheck()) board.powerOff();
+
+  // Kept for boards without NRF52_POWER_MANAGEMENT: same pref, two readings
+  // apart so one noisy sample does not turn the node off.
+  if (power_screens::batteryFlat(board.getBattMilliVolts(), board.isExternalPowered(),
+                                 boot_prefs.shutdown_mv)) {
+    delay(200);
+    if (power_screens::batteryFlat(board.getBattMilliVolts(), board.isExternalPowered(),
+                                   boot_prefs.shutdown_mv)) {
+#ifdef DISPLAY_CLASS
+      if (disp) power_screens::drawPowerOff(disp, true);
+#endif
+#if defined(NRF52_POWER_MANAGEMENT)
+      static_cast<NRF52Board&>(board).initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
+#endif
+      board.powerOff();
+    }
+  }
+
+  if (!radio_init()) { halt(); }
+
+  fast_rng.begin(radio_driver.getRngSeed());
+
+  store.begin();
+  the_mesh.begin();
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (the_mesh.getNodePrefs()->ble_pin == 0) {

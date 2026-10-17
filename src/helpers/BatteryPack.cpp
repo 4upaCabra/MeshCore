@@ -9,12 +9,12 @@ namespace BatteryPack {
 // ---- OCV tables (1S cell mV → %). Descending voltage. ----
 
 // Typical LiPo / Li-ion resting voltage against charge left (the widely used
-// 5%-step chart), with 0% moved to 3.40 V, where the node powers off
-// (AUTO_SHUTDOWN_MILLIVOLTS): about 2% of the cell is left there on this chart,
-// so the steps below are rescaled by those 2% and the gauge reaches zero as the
-// node goes off. One measured discharge was tried instead, but it rested on a
-// constant-load assumption and an unchecked voltage reading, and it read 3.8 V
-// as 17% where a normal cell still holds about 40%.
+// 5%-step chart), with 0% moved to 3.40 V, the highest threshold the companion
+// UI offers for `shutdown_mv`: about 2% of the cell is left there on this
+// chart, so the steps below are rescaled by those 2% and the gauge reaches zero
+// as the node goes off. One measured discharge was tried instead, but it rested
+// on a constant-load assumption and an unchecked voltage reading, and it read
+// 3.8 V as 17% where a normal cell still holds about 40%.
 static const BatteryOcvPoint kLithium[] = {
   {4200, 100}, {4150, 95}, {4110, 90}, {4080, 85}, {4020, 80},
   {3980,  75}, {3950, 69}, {3910, 64}, {3870, 59}, {3850, 54},

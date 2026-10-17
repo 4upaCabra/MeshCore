@@ -72,6 +72,10 @@ public:
   #endif
 };
 
+// Read /prefs.json into `prefs` without needing a CommonCLI instance. Used at
+// boot before radio_init(), when the shutdown threshold must be known.
+bool loadNodePrefs(FILESYSTEM* fs, NodePrefs& prefs);
+
 class CommonCLI {
   mesh::RTCClock* _rtc;
   NodePrefs* _prefs;

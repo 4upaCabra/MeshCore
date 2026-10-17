@@ -7,10 +7,25 @@ The nRF52 Power Management module provides battery protection features to preven
 ## Features
 
 ### Boot Voltage Protection
-- Checks battery voltage immediately after boot and before mesh operations commence
-- If voltage is below a configurable threshold (e.g., 3300mV), the device configures voltage wake (LPCOMP + VBUS) and enters protective shutdown (SYSTEMOFF)
-- Prevents boot loops when battery is critically low
+- Uses one user preference, `shutdown_mv` (mV), for both the boot lockout and the runtime low-voltage shutdown
+- 0 (the default) disables both: protection is opt-in, so a LiFePO4/LTO/Na-ion node is never bricked by a Li-ion threshold
+- Reads the preference from `/prefs.json` and checks the battery **before** `radio_init()`, so a nearly flat cell cannot brown out during radio start-up
+- If the voltage is below the configured threshold, the device configures voltage wake (LPCOMP + VBUS) and enters protective shutdown (SYSTEMOFF)
 - Skipped when external power (USB VBUS) is detected
+- Valid values are 0 or 2000..4500 mV
+
+### Chemistry thresholds
+There are no battery-chemistry tables in firmware: set the value that matches the cell you fitted. These are typical empty-load cut-offs, not a recommendation to discharge this far:
+
+| Chemistry | Typical shutdown threshold |
+|-----------|----------------------------|
+| Li-ion / LiPo | 3.0-3.3 V |
+| LiFePO4 | 2.8-2.9 V |
+| LTO (lithium titanate) | 1.9-2.0 V |
+| Na-ion (sodium-ion) | 2.0 V |
+| Any | 0 = protection off |
+
+The LPCOMP wake reference stays per board (`PWRMGT_LPCOMP_REFSEL` in `variant.h`).
 
 ### Voltage Wake (LPCOMP + VBUS)
 - Configures the nRF52's Low Power Comparator (LPCOMP) before entering SYSTEMOFF
@@ -84,12 +99,16 @@ To enable power management on a board variant:
    -D NRF52_POWER_MANAGEMENT
    ```
 
-2. **Define configuration in variant.h**:
+2. **Define LPCOMP hardware in variant.h**:
    ```c
-   #define PWRMGT_VOLTAGE_BOOTLOCK    3300   // Won't boot below this voltage (mV)
    #define PWRMGT_LPCOMP_AIN          7      // AIN channel for voltage sensing
-   #define PWRMGT_LPCOMP_REFSEL       2      // REFSEL (0-6=1/8..7/8, 7=ARef, 8-15=1/16..15/16)
+   #define PWRMGT_LPCOMP_REFSEL       2      // REFSEL for the wake (0-15, see below)
+   // Optional runtime DOWN trigger:
+   #define PWRMGT_LPCOMP_LOW_REFSEL   11
    ```
+
+   `PWRMGT_VOLTAGE_BOOTLOCK` is no longer used for locking; the threshold comes
+   from the `shutdown_mv` preference.
 
 3. **Implement in board .cpp file**:
    ```cpp
@@ -115,11 +134,7 @@ To enable power management on a board variant:
 
    void MyBoard::begin() {
      NRF52Board::begin();  // or NRF52BoardDCDC::begin()
-     // ... board setup ...
-
-   #ifdef NRF52_POWER_MANAGEMENT
-     checkBootVoltage(&power_config);
-   #endif
+     // ... board setup, no boot lockout here ...
    }
    ```
 
@@ -185,6 +200,8 @@ Power management status can be queried via the CLI:
 | `get pwrmgt.source`     | Returns current power source - "battery" or "external" (5V/USB power) |
 | `get pwrmgt.bootreason` | Returns reset and shutdown reason strings                             |
 | `get pwrmgt.bootmv`     | Returns boot voltage in millivolts                                    |
+| `get pwrmgt.shutdown`   | Returns the configured threshold: `> 0 (off)` or e.g. `> 3300 mV`     |
+| `set pwrmgt.shutdown`   | `set pwrmgt.shutdown <mV\|0\|off>` - saves and applies immediately     |
 
 On boards without power management enabled, `get pwrmgt.source` and
 `get pwrmgt.bootmv` return:
@@ -208,15 +225,14 @@ DEBUG: PWRMGT: Boot voltage = 3450 mV (threshold = 3300 mV)
 DEBUG: PWRMGT: LPCOMP wake configured (AIN7, ref=3/8 VDD)
 ```
 
-## Phase 2 (Planned)
+## Runtime shutdown
 
-- Runtime voltage monitoring
-- Voltage state machine (Normal -> Warning -> Critical -> Shutdown)
-- Configurable thresholds
-- Load shedding callbacks for power reduction
-- Deep sleep integration
-- Scheduled wake-up
-- Extended sleep with periodic monitoring
+Companion builds reuse the same `shutdown_mv` value: `UITask` checks the battery
+every 8 s and shuts down after a few consecutive low readings. With 0 there is no
+runtime low-voltage shutdown at all. On nRF52 boards that have a runtime LPCOMP
+DOWN reference (`PWRMGT_LPCOMP_LOW_REFSEL`, currently ProMicro), the comparator
+is armed only while `shutdown_mv > 0`; setting it back to 0 disarms it. Repeater,
+room-server and sensor builds use the LPCOMP trigger where the board has one.
 
 ## References
 

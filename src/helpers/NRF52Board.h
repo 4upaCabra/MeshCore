@@ -19,8 +19,9 @@ struct PowerMgtConfig {
   uint8_t lpcomp_ain_channel;       // AIN0-7 for voltage sensing pin
   uint8_t lpcomp_refsel;            // REFSEL for UP event (wake): 0-6=1/8..7/8, 7=ARef, 8-15=1/16..15/16
 
-  // Boot protection voltage threshold (millivolts)
-  // Set to 0 to disable boot protection
+  // Deprecated: the boot/runtime shutdown threshold now comes from the
+  // `shutdown_mv` preference. Kept so existing variant initialisers still
+  // compile; PWRMGT_VOLTAGE_BOOTLOCK is no longer used for locking.
   uint16_t voltage_bootlock;
 
   // REFSEL for DOWN event (runtime low-voltage shutdown trigger); 0 = disabled
@@ -45,7 +46,10 @@ protected:
   uint8_t shutdown_reason;            // GPREGRET value (why we entered last SYSTEMOFF)
   uint16_t boot_voltage_mv;           // Battery voltage at boot (millivolts)
 
-  bool checkBootVoltage(const PowerMgtConfig* config);
+  uint16_t shutdown_mv = 0;           // 0 = low-voltage protection disabled
+  // Board hook: (re)arm a runtime LPCOMP DOWN trigger for this threshold.
+  // Called only when shutdown_mv > 0; the base implementation does nothing.
+  virtual void onShutdownMilliVoltsChanged(uint16_t mv) { (void)mv; }
   void enterSystemOff(uint8_t reason);
   void configureVoltageWake(uint8_t ain_channel, uint8_t refsel);
   void configureLowVoltageAlert(uint8_t ain_channel, uint8_t low_refsel);
@@ -57,6 +61,9 @@ public:
   // Board power-down for `reason`; low-voltage reasons also arm the wake on
   // USB power / a recovered battery. Does not return.
   virtual void initiateShutdown(uint8_t reason);
+  // Boot lockout/runtime threshold from the `shutdown_mv` preference.
+  void setShutdownMilliVolts(uint16_t mv) override;
+  bool pwrmgtBootCheck() override;
 #endif
   NRF52Board(char *otaname) : ota_name(otaname) {}
   virtual void begin();

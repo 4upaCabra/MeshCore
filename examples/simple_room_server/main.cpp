@@ -53,23 +53,38 @@ void setup() {
   }
 #endif
 
-  if (!radio_init()) { halt(); }
-
-  fast_rng.begin(radio_driver.getRngSeed());
-
+  // Read the opt-in shutdown threshold before radio_init() so a nearly flat
+  // cell cannot brown out during radio start-up.
   FILESYSTEM* fs;
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
   fs = &InternalFS;
-  IdentityStore store(InternalFS, "");
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
   fs = &LittleFS;
-  IdentityStore store(LittleFS, "/identity");
-  store.begin();
 #elif defined(ESP32)
   SPIFFS.begin(true);
   fs = &SPIFFS;
+#else
+  #error "need to define filesystem"
+#endif
+  {
+    NodePrefs boot_prefs;
+    loadNodePrefs(fs, boot_prefs);
+    board.setShutdownMilliVolts(boot_prefs.shutdown_mv);
+    board.pwrmgtBootCheck();
+  }
+
+  if (!radio_init()) { halt(); }
+
+  fast_rng.begin(radio_driver.getRngSeed());
+
+#if defined(NRF52_PLATFORM)
+  IdentityStore store(InternalFS, "");
+#elif defined(RP2040_PLATFORM)
+  IdentityStore store(LittleFS, "/identity");
+  store.begin();
+#elif defined(ESP32)
   IdentityStore store(SPIFFS, "/identity");
 #else
   #error "need to define filesystem"

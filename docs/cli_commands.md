@@ -1175,6 +1175,25 @@ region save
 
 ---
 
+#### View or set the low-voltage shutdown threshold
+**Usage:**
+- `get pwrmgt.shutdown`
+- `set pwrmgt.shutdown <mV|0|off>`
+
+**Parameters:**
+- `mV`: 2000-4500, or `0` / `off` to disable
+
+**Notes:** One value is used for both the boot lockout and the runtime
+low-voltage shutdown. It is opt-in and defaults to `0` (off), because a fixed
+Li-ion threshold would brick LiFePO4/LTO/Na-ion nodes. Set it before the radio
+starts; `set` saves the preference and applies it immediately. `get` answers
+`> 0 (off)` or e.g. `> 3300 mV`.
+
+Typical thresholds: Li-ion/LiPo ~3.0-3.3 V, LiFePO4 ~2.8-2.9 V, LTO ~1.9-2.0 V,
+Na-ion ~2.0 V.
+
+---
+
 ### Ethernet (when Ethernet support is compiled in)
 
 Ethernet support is available on RAK4631 boards with a RAK13800 (W5100S) Ethernet module. Use the `_ethernet` firmware variants (e.g. `RAK_4631_repeater_ethernet`) to enable this feature.

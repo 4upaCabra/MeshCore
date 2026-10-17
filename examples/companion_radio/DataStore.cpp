@@ -195,6 +195,7 @@ void DataStore::loadPrefs(NodePrefs& prefs) {
     if (file) {
       prefs.loadSerial(file);   // new Serial prefs
       file.close();
+      prefs.shutdown_mv = NodePrefs::sanitizeShutdownMv(prefs.shutdown_mv);
     }
   } else if (_fs->exists("/new_prefs")) {
     loadPrefsInt("/new_prefs", prefs);

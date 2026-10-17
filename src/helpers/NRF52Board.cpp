@@ -72,7 +72,7 @@ void NRF52Board::pwrmgtInit() {
   // Copy early-captured register values
   reset_reason = g_nrf52_reset_reason;
   shutdown_reason = g_nrf52_shutdown_reason;
-  boot_voltage_mv = 0;  // Will be set by checkBootVoltage()
+  boot_voltage_mv = 0;  // Will be set by pwrmgtBootCheck()
 
   // Clear registers for next boot
   // Note: At this point SoftDevice may or may not be enabled
@@ -128,13 +128,32 @@ const char* NRF52Board::getShutdownReasonString(uint8_t reason) {
   return "Unknown";
 }
 
-bool NRF52Board::checkBootVoltage(const PowerMgtConfig* config) {
+void NRF52Board::setShutdownMilliVolts(uint16_t mv) {
+  // One configurable voltage for both the boot lockout and the runtime
+  // shutdown. 0 disables both; anything else must be a plausible cell voltage.
+  if (mv != 0 && (mv < 2000 || mv > 4500)) mv = 0;
+  shutdown_mv = mv;
+
+  // Runtime LPCOMP trigger: drop the old comparison and re-arm only when
+  // protection is enabled. A board without a runtime trigger does nothing.
+  NRF_LPCOMP->TASKS_STOP = 1;
+  NRF_LPCOMP->ENABLE = LPCOMP_ENABLE_ENABLE_Disabled;
+  NRF_LPCOMP->INTENCLR = 0xFFFFFFFF;
+  NVIC_DisableIRQ(LPCOMP_COMP_IRQn);
+  s_power_instance = nullptr;
+
+  if (shutdown_mv > 0) {
+    onShutdownMilliVoltsChanged(shutdown_mv);
+  }
+}
+
+bool NRF52Board::pwrmgtBootCheck() {
   pwrmgtInit();
 
-  // Read boot voltage
+  // Always sample: `get pwrmgt.bootmv` reports it even when protection is off.
   boot_voltage_mv = getBattMilliVolts();
-  
-  if (config->voltage_bootlock == 0) return true;  // Protection disabled
+
+  if (shutdown_mv == 0) return true;  // Protection disabled
 
   // Skip check if externally powered
   if (isExternalPowered()) {
@@ -144,10 +163,10 @@ bool NRF52Board::checkBootVoltage(const PowerMgtConfig* config) {
   }
 
   MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage = %u mV (threshold = %u mV)",
-      boot_voltage_mv, config->voltage_bootlock);
+      boot_voltage_mv, shutdown_mv);
 
   // If voltage is below the boot threshold, enter protective shutdown
-  if (boot_voltage_mv < config->voltage_bootlock) {
+  if (boot_voltage_mv < shutdown_mv) {
     MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage too low (%u mV) - entering protective shutdown", boot_voltage_mv);
 
     initiateShutdown(SHUTDOWN_REASON_BOOT_PROTECT);

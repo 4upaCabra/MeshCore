@@ -37,17 +37,23 @@ static bool isValidName(const char *n) {
   return true;
 }
 
+bool loadNodePrefs(FILESYSTEM* fs, NodePrefs& prefs) {
+  if (!fs->exists("/prefs.json")) return false;
+#if defined(RP2040_PLATFORM)
+  File file = fs->open("/prefs.json", "r");
+#else
+  File file = fs->open("/prefs.json");
+#endif
+  if (!file) return false;
+  bool success = prefs.loadSerial(file);
+  file.close();
+  prefs.shutdown_mv = NodePrefs::sanitizeShutdownMv(prefs.shutdown_mv);
+  return success;
+}
+
 void CommonCLI::loadPrefs(FILESYSTEM* fs) {
   if (fs->exists("/prefs.json")) {
-#if defined(RP2040_PLATFORM)
-    File file = fs->open("/prefs.json", "r");
-#else
-    File file = fs->open("/prefs.json");
-#endif
-    if (file) {
-      _prefs->loadSerial(file);   // new Serial prefs
-      file.close();
-    }
+    loadNodePrefs(fs, *_prefs);
   } else if (fs->exists("/com_prefs")) {
     loadPrefsInt(fs, "/com_prefs");
     if (savePrefs(fs)) {  // save to new Serial prefs
@@ -137,6 +143,7 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {  // Legacy 
 
     _prefs->powersaving_enabled = constrain(_prefs->powersaving_enabled, 0, 1);
     _prefs->power_mode = constrain(_prefs->power_mode, 0, POWER_MODE_MAX);
+    _prefs->shutdown_mv = NodePrefs::sanitizeShutdownMv(_prefs->shutdown_mv);
 
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
@@ -517,7 +524,7 @@ void CommonCLI::appendCommonHelp(char* reply, size_t cap) {
   }
   snprintf(reply + len, cap - len,
     "advert, clock, time, get, set, ver, board, neighbors, password, "
-    "tempradio, powersaving, log, timesync, clear stats, stats-core, "
+    "tempradio, powersaving, pwrmgt, log, timesync, clear stats, stats-core, "
     "reboot, poweroff"
 #if ENV_INCLUDE_GPS == 1
     ", gps"
@@ -585,6 +592,30 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, char* command, char* rep
     _prefs->disable_fwd = memcmp(&config[7], "off", 3) == 0;
     savePrefs();
     strcpy(reply, _prefs->disable_fwd ? "OK - repeat is now OFF" : "OK - repeat is now ON");
+  } else if (memcmp(config, "pwrmgt.shutdown", 15) == 0) {
+    const char* value = &config[15];
+    while (*value == ' ') value++;
+    uint32_t mv;
+    if (strcmp(value, "off") == 0) {
+      mv = 0;
+    } else if (*value >= '0' && *value <= '9') {
+      mv = _atoi(value);
+      if (mv != 0 && (mv < 2000 || mv > 4500)) {
+        strcpy(reply, "Error: threshold must be 0 (off) or 2000-4500 mV");
+        return;
+      }
+    } else {
+      strcpy(reply, "Error: threshold must be 0 (off) or 2000-4500 mV");
+      return;
+    }
+    _prefs->shutdown_mv = (uint16_t)mv;
+    _board->setShutdownMilliVolts(_prefs->shutdown_mv);
+    savePrefs();
+    if (mv == 0) {
+      strcpy(reply, "OK - low-voltage shutdown disabled");
+    } else {
+      sprintf(reply, "OK - shutdown below %u mV", (unsigned)mv);
+    }
 #if defined(WITH_COMPANION_CLI)
   } else if (memcmp(config, "power.mode ", 11) == 0) {
     const char* value = &config[11];
@@ -910,6 +941,12 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, char* command, char* rep
 #else
     strcpy(reply, "ERROR: Power management not supported");
 #endif
+  } else if (memcmp(config, "pwrmgt.shutdown", 15) == 0) {
+    if (_prefs->shutdown_mv == 0) {
+      strcpy(reply, "> 0 (off)");
+    } else {
+      sprintf(reply, "> %u mV", _prefs->shutdown_mv);
+    }
   } else if (memcmp(config, "extra.sf", 8) == 0) {
     char* tmp = reply;
     for (int i = 0; i < 3 && _prefs->extra_sf[i] != 0; i++) {

@@ -57,9 +57,11 @@ void RAK3401Board::begin() {
   // TX/RX switching (CTX) is handled by SX1262 DIO2 via SetDIO2AsRfSwitchCtrl.
   pinMode(SX126X_POWER_EN, OUTPUT);
 #ifdef NRF52_POWER_MANAGEMENT
-  // Boot voltage protection check (may not return if voltage too low)
-  // We need to call this after we configure SX126X_POWER_EN as output but before we pull high
-  checkBootVoltage(&power_config);
+  // Initialise power management and sample the boot voltage for
+  // `get pwrmgt.bootmv`; the lockout itself is enforced by the role before
+  // radio_init(), using the `shutdown_mv` preference.
+  pwrmgtInit();
+  boot_voltage_mv = getBattMilliVolts();
 #endif
   digitalWrite(SX126X_POWER_EN, HIGH);
   delay(1);  // SKY66122 turn-on settling time (tON = 3us typ)

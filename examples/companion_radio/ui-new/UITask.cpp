@@ -403,7 +403,7 @@ public:
       case SettingsPage::CHAT:    return 6;
       case SettingsPage::DISP:    return 4 + extraCount(UI_FOLDER_DISPLAY);
       case SettingsPage::COMMS:   return 5 + extraCount(UI_FOLDER_CONNECTION);
-      case SettingsPage::SYSTEM:  return 4;
+      case SettingsPage::SYSTEM:  return 5;
       case SettingsPage::CODECS:  return 5;
     }
     return 0;
@@ -490,7 +490,8 @@ public:
     } else if (page == SettingsPage::SYSTEM) {
       if (i == 1) return _TR("Power Mode", "Энергосбер.");
       if (i == 2) return _TR("Batt Cal", "Калибр. АКБ");
-      if (i == 3) return _TR("Codecs >", "Кодеки >");
+      if (i == 3) return _TR("Shutdown", "Откл. по АКБ");
+      if (i == 4) return _TR("Codecs >", "Кодеки >");
     } else if (page == SettingsPage::CODECS) {
       if (i == 1) return "MCOtxt";
       if (i == 2) return "MCMP";
@@ -606,7 +607,14 @@ public:
       } else if (i == 2) {
         uint16_t mv = board.getBattAdcMilliVolts();
         snprintf(val, val_len, "%u.%02uV >", mv / 1000, (mv % 1000) / 10);
-      } else if (i == 3) {
+      } else if (i == 3 && _node_prefs) {
+        uint16_t mv = _node_prefs->shutdown_mv;
+        if (mv == 0) {
+          snprintf(val, val_len, "%s", _TR("Off", "Выкл"));
+        } else {
+          snprintf(val, val_len, "%u.%u V", mv / 1000, (mv % 1000) / 100);
+        }
+      } else if (i == 4) {
         snprintf(val, val_len, ">");
       }
       return true;
@@ -642,7 +650,7 @@ public:
     if (i == 0) {
       if (page == SettingsPage::CODECS) {
         _settings_page = SettingsPage::SYSTEM;
-        _settings_sel = 3;
+        _settings_sel = 4;
         _settings_scroll = 0;
       } else {
         SettingsPage prev = _settings_page;
@@ -759,7 +767,15 @@ public:
       } else if (i == 2) {
         _adccal.measure(board);
         _in_adccal = true;
-      } else if (i == 3) {
+      } else if (i == 3 && _node_prefs) {
+        static const uint16_t values[4] = { 0, 3000, 3200, 3400 };
+        uint16_t mv = _node_prefs->shutdown_mv;
+        int idx = (mv == 3000) ? 1 : (mv == 3200) ? 2 : (mv == 3400) ? 3 : 0;
+        idx = fwd ? (idx + 1) % 4 : (idx + 3) % 4;
+        _node_prefs->shutdown_mv = values[idx];
+        board.setShutdownMilliVolts(values[idx]);
+        the_mesh.savePrefs();
+      } else if (i == 4) {
         _settings_page = SettingsPage::CODECS;
         _settings_sel = 1;
         _settings_scroll = 0;
@@ -1567,7 +1583,7 @@ public:
       if (c == KEY_CANCEL || c == KEY_PREV) {
         if (_settings_page == SettingsPage::CODECS) {
           _settings_page = SettingsPage::SYSTEM;
-          _settings_sel = 3;
+          _settings_sel = 4;
           _settings_scroll = 0;
         } else if (_settings_page != SettingsPage::ROOT) {
           SettingsPage prev = _settings_page;
@@ -2511,7 +2527,9 @@ void UITask::loop() {
 #endif
 
   if (millis() > next_batt_chck) {
-    const bool low = power_screens::batteryFlat(getBattMilliVolts(), board.isExternalPowered());
+    const uint16_t shutdown_mv = _node_prefs ? _node_prefs->shutdown_mv : 0;
+    const bool low = power_screens::batteryFlat(getBattMilliVolts(), board.isExternalPowered(),
+                                                shutdown_mv);
     _low_batt_count = low ? _low_batt_count + 1 : 0;
     if (_low_batt_count >= AUTO_SHUTDOWN_CONFIRM) {
       _low_battery_off = true;

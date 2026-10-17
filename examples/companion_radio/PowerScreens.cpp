@@ -1,18 +1,6 @@
 #include "PowerScreens.h"
 
 #include <Arduino.h>
-#include <helpers/BatteryPack.h>
-
-// Power off by voltage: the level the node still runs at reliably, under its
-// transmit load, is what matters, not the charge left. 3.40 V until bench
-// measurements give a per-board figure; a board may set its own.
-#ifndef AUTO_SHUTDOWN_MILLIVOLTS
-  #define AUTO_SHUTDOWN_MILLIVOLTS  3400
-#endif
-// Optional extra rule by charge left (BatteryPack curve); off by default.
-#ifndef AUTO_SHUTDOWN_PERCENT
-  #define AUTO_SHUTDOWN_PERCENT  0
-#endif
 
 #include "UILang.h"
 
@@ -80,10 +68,9 @@ void drawPowerOff(DisplayDriver* d, bool low_battery) {
 
 #endif  // DISPLAY_CLASS
 
-bool batteryFlat(uint16_t mv, bool external_power) {
-  if (external_power || mv < 2500) return false;
-  if (AUTO_SHUTDOWN_PERCENT > 0 && BatteryPack::getPercent(mv) <= AUTO_SHUTDOWN_PERCENT) return true;
-  return mv < AUTO_SHUTDOWN_MILLIVOLTS;
+bool batteryFlat(uint16_t mv, bool external_power, uint16_t shutdown_mv) {
+  if (shutdown_mv == 0 || external_power || mv < 2500) return false;
+  return mv < shutdown_mv;
 }
 
 }  // namespace power_screens

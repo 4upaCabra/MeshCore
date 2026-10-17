@@ -44,6 +44,9 @@
 //     `ui` and `south` groups, which upstream will never touch.
 class NodePrefs : public ConfigSerializer {
 public:
+  static uint16_t sanitizeShutdownMv(uint32_t mv) {
+    return (mv == 0 || (mv >= 2000 && mv <= 4500)) ? (uint16_t)mv : 0;
+  }
   // === Common fields ===
   float    airtime_factor = 0;
   char     node_name[32];
@@ -93,6 +96,11 @@ public:
   // JSON file, so an old file simply has no value here (the field keeps its
   // default) and an older firmware ignores a key it does not know.
   uint8_t  power_mode = POWER_MODE_AUTO;
+  // One configurable battery threshold (mV), used both as the boot lockout and
+  // the runtime low-voltage shutdown. 0 = disabled (the default: opt-in, so a
+  // LiFePO4/LTO/Na-ion node is never bricked by a Li-ion voltage). Valid range
+  // is 0 or 2000..4500 mV.
+  uint16_t shutdown_mv = 0;
   uint32_t discovery_mod_timestamp = 0;
   float    adc_multiplier = 0;
   char     owner_info[120];
@@ -261,6 +269,7 @@ private:
       def("adc_mult", _parent->adc_multiplier);
       def("pwr_sav_en", _parent->powersaving_enabled);
       def("pwr_mode", _parent->power_mode);
+      def("shutdown_mv", _parent->shutdown_mv);
     }
   public:
     PowerPrefs(NodePrefs* parent) : _parent(parent) { }

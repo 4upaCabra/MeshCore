@@ -45,7 +45,11 @@ void HeltecTowerV2Board::begin() {
   digitalWrite(PIN_BAT_CTL, LOW);
 
 #ifdef NRF52_POWER_MANAGEMENT
-  checkBootVoltage(&power_config);
+  // Initialise power management and sample the boot voltage for
+  // `get pwrmgt.bootmv`; the lockout itself is enforced by the role before
+  // radio_init(), using the `shutdown_mv` preference.
+  pwrmgtInit();
+  boot_voltage_mv = getBattMilliVolts();
 #endif
 
   Wire.setPins(PIN_BOARD_SDA, PIN_BOARD_SCL);
