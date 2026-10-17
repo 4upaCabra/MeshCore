@@ -69,7 +69,9 @@ void drawPowerOff(DisplayDriver* d, bool low_battery) {
 #endif  // DISPLAY_CLASS
 
 bool batteryFlat(uint16_t mv, bool external_power, uint16_t shutdown_mv) {
-  if (shutdown_mv == 0 || external_power || mv < 2500) return false;
+  // Below 1 V the reading itself is wrong (no cell, ADC not ready): never a
+  // reason to power off. 2.5 V was the old cut-off and hid LTO/Na-ion cells.
+  if (shutdown_mv == 0 || external_power || mv < 1000) return false;
   return mv < shutdown_mv;
 }
 

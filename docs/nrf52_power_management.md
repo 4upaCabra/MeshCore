@@ -27,6 +27,12 @@ There are no battery-chemistry tables in firmware: set the value that matches th
 
 The LPCOMP wake reference stays per board (`PWRMGT_LPCOMP_REFSEL` in `variant.h`).
 
+The comparator references are fixed fractions of VDD, tuned for Li-ion. On ProMicro the runtime
+trigger sits at about 3.0 V and is armed only for a threshold of 3000 mV or more; below that the
+boot check and the companion's software check do the work. The wake reference (about 3.9 V on
+ProMicro) is above the full voltage of LiFePO4 / LTO / Na-ion cells: such nodes come back after a
+low-voltage shutdown on USB power or the reset button, not by themselves.
+
 ### Voltage Wake (LPCOMP + VBUS)
 - Configures the nRF52's Low Power Comparator (LPCOMP) before entering SYSTEMOFF
 - Enables USB VBUS detection so external power can wake the device

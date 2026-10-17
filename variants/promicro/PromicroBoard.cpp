@@ -12,9 +12,16 @@ const PowerMgtConfig power_config = {
   .lpcomp_low_refsel  = PWRMGT_LPCOMP_LOW_REFSEL,
 };
 
+// The comparator trips at a fixed fraction of VDD, about 3.0 V of battery on this
+// board (PWRMGT_LPCOMP_LOW_REFSEL). It is a Li-ion backstop only: armed for a
+// threshold at or above that, never for a lower one (LiFePO4, LTO, Na-ion),
+// which it would undercut by switching the node off early.
+#ifndef PWRMGT_LPCOMP_LOW_MV
+  #define PWRMGT_LPCOMP_LOW_MV  3000
+#endif
+
 void PromicroBoard::onShutdownMilliVoltsChanged(uint16_t mv) {
-  // LPCOMP is the runtime trigger; its reference stays board-specific.
-  (void)mv;
+  if (mv < PWRMGT_LPCOMP_LOW_MV) return;
   if (power_config.lpcomp_low_refsel) {
     configureLowVoltageAlert(power_config.lpcomp_ain_channel, power_config.lpcomp_low_refsel);
   }
