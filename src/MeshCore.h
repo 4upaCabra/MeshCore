@@ -98,6 +98,9 @@ public:
   virtual void setShutdownMilliVolts(uint16_t mv) { (void)mv; }
   // Boot lockout check. Returns false only if the board has powered itself off.
   virtual bool pwrmgtBootCheck() { return true; }
+  // Runtime low-voltage shutdown handler. Invoked when battery voltage is
+  // persistently below the configured threshold. Default falls back to powerOff().
+  virtual void lowVoltageShutdown() { powerOff(); }
 
   virtual bool handleCommand(const char* command, uint32_t sender_timestamp, char* reply) { return false; }
 

@@ -23,6 +23,7 @@ protected:
   bool inhibit_sleep = false;
   float adc_mult = 0.0f;  // 0.0f = use board default
   static inline portMUX_TYPE sleepMux = portMUX_INITIALIZER_UNLOCKED;
+  uint16_t shutdown_mv = 0;
 
 public:
   void begin() {
@@ -69,6 +70,9 @@ public:
 
   virtual void powerOff() override;
   void enterDeepSleep(uint32_t secs);
+  void setShutdownMilliVolts(uint16_t mv) override;
+  bool pwrmgtBootCheck() override;
+  void lowVoltageShutdown() override;
 
   uint32_t getIRQGpio() override {
     return P_LORA_DIO_1; // default for SX1262

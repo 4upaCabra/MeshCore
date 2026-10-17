@@ -1,5 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
+#include <helpers/LowBatteryGuard.h>
 
 #include "MyMesh.h"
 
@@ -187,6 +188,9 @@ void loop() {
     ethernet_command[0] = 0;
   }
 #endif
+
+  static LowBatteryGuard low_batt_guard;
+  low_batt_guard.loop(board, the_mesh.getNodePrefs()->shutdown_mv);
 
   the_mesh.loop();
   sensors.loop();

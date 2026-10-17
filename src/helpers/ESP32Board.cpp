@@ -1,10 +1,12 @@
 #ifdef ESP_PLATFORM
 
 #include "ESP32Board.h"
+#include <helpers/LowBatteryGuard.h>
 #include <target.h>
 #include <esp_attr.h>
 
 RTC_NOINIT_ATTR uint32_t esp32_rtc_time_set_marker;
+RTC_DATA_ATTR static bool s_esp32_low_batt_slept = false;
 
 #if defined(ADMIN_PASSWORD) && !defined(DISABLE_WIFI_OTA)   // Repeater or Room Server only
 #include <WiFi.h>
@@ -88,5 +90,42 @@ void ESP32Board::enterDeepSleep(uint32_t secs) {
 
   // Finally set ESP32 into deepsleep
   esp_deep_sleep_start(); // CPU halts here and never returns!
+}
+
+void ESP32Board::setShutdownMilliVolts(uint16_t mv) {
+  if (mv != 0 && (mv < 2000 || mv > 4500)) mv = 0;
+  shutdown_mv = mv;
+}
+
+bool ESP32Board::pwrmgtBootCheck() {
+  if (shutdown_mv == 0) {
+    s_esp32_low_batt_slept = false;
+    return true;
+  }
+
+  if (isExternalPowered()) {
+    s_esp32_low_batt_slept = false;
+    return true;
+  }
+
+  uint16_t threshold = shutdown_mv;
+  if (s_esp32_low_batt_slept) {
+    threshold += LOWBATT_BOOT_HYST_MV;
+  }
+
+  uint16_t mv = getBattMilliVolts();
+  if (mv < threshold) {
+    s_esp32_low_batt_slept = true;
+    enterDeepSleep(LOWBATT_ESP32_SLEEP_S);
+    return false;
+  }
+
+  s_esp32_low_batt_slept = false;
+  return true;
+}
+
+void ESP32Board::lowVoltageShutdown() {
+  s_esp32_low_batt_slept = true;
+  enterDeepSleep(LOWBATT_ESP32_SLEEP_S);
 }
 #endif

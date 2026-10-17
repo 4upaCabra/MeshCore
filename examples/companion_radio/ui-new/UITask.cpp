@@ -2,6 +2,7 @@
 #include "UIExtensions.h"
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/BatteryPack.h>
+#include <helpers/LowBatteryGuard.h>
 #include "../MyMesh.h"
 #include "../AdcCalibration.h"
 #include "../PowerScreens.h"
@@ -2526,16 +2527,11 @@ void UITask::loop() {
   vibration.loop();
 #endif
 
-  if (millis() > next_batt_chck) {
-    const uint16_t shutdown_mv = _node_prefs ? _node_prefs->shutdown_mv : 0;
-    const bool low = power_screens::batteryFlat(getBattMilliVolts(), board.isExternalPowered(),
-                                                shutdown_mv);
-    _low_batt_count = low ? _low_batt_count + 1 : 0;
-    if (_low_batt_count >= AUTO_SHUTDOWN_CONFIRM) {
-      _low_battery_off = true;
-      shutdown();
-    }
-    next_batt_chck = millis() + 8000;
+  static LowBatteryGuard low_batt_guard;
+  const uint16_t shutdown_mv = _node_prefs ? _node_prefs->shutdown_mv : 0;
+  if (low_batt_guard.due(board, shutdown_mv)) {
+    _low_battery_off = true;
+    shutdown();
   }
 }
 

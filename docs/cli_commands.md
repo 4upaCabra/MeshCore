@@ -1192,6 +1192,8 @@ starts; `set` saves the preference and applies it immediately. `get` answers
 Typical thresholds: Li-ion/LiPo ~3.0-3.3 V, LiFePO4 ~2.8-2.9 V, LTO ~1.9-2.0 V,
 Na-ion ~2.0 V.
 
+Runtime guard samples every 10 seconds (`LOWBATT_CHECK_MS`) and triggers shutdown after 6 consecutive readings (`LOWBATT_STRIKES`) below the threshold (external power and readings under 1000 mV reset the counter). When waking after a low-voltage shutdown or boot protection, a 150 mV hysteresis (`LOWBATT_BOOT_HYST_MV`) requires voltage to reach threshold + 150 mV to resume boot. On ESP32, low-voltage shutdown enters deep sleep with an 1800-second timer wake (`LOWBATT_ESP32_SLEEP_S`, 30 minutes) to re-evaluate the battery.
+
 ---
 
 ### Ethernet (when Ethernet support is compiled in)

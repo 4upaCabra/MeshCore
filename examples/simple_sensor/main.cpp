@@ -1,4 +1,5 @@
 #include "SensorMesh.h"
+#include <helpers/LowBatteryGuard.h>
 
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
@@ -169,6 +170,9 @@ void loop() {
 
     command[0] = 0;  // reset command buffer
   }
+
+  static LowBatteryGuard low_batt_guard;
+  low_batt_guard.loop(board, the_mesh.getNodePrefs()->shutdown_mv);
 
   board.loop();   // let the board feed its watchdog, run periodic housekeeping
 

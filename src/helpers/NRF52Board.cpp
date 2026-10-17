@@ -1,5 +1,6 @@
 #if defined(NRF52_PLATFORM)
 #include "NRF52Board.h"
+#include <helpers/LowBatteryGuard.h>
 #include <target.h>
 
 #include <bluefruit.h>
@@ -162,11 +163,17 @@ bool NRF52Board::pwrmgtBootCheck() {
     return true;
   }
 
+  uint16_t threshold = shutdown_mv;
+  if (shutdown_reason == SHUTDOWN_REASON_LOW_VOLTAGE ||
+      shutdown_reason == SHUTDOWN_REASON_BOOT_PROTECT) {
+    threshold += LOWBATT_BOOT_HYST_MV;
+  }
+
   MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage = %u mV (threshold = %u mV)",
-      boot_voltage_mv, shutdown_mv);
+      boot_voltage_mv, threshold);
 
   // If voltage is below the boot threshold, enter protective shutdown
-  if (boot_voltage_mv < shutdown_mv) {
+  if (boot_voltage_mv < threshold) {
     MESH_DEBUG_PRINTLN("PWRMGT: Boot voltage too low (%u mV) - entering protective shutdown", boot_voltage_mv);
 
     initiateShutdown(SHUTDOWN_REASON_BOOT_PROTECT);
@@ -174,6 +181,10 @@ bool NRF52Board::pwrmgtBootCheck() {
   }
 
   return true;
+}
+
+void NRF52Board::lowVoltageShutdown() {
+  initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
 }
 
 void NRF52Board::initiateShutdown(uint8_t reason) {

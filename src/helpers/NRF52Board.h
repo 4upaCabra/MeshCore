@@ -64,6 +64,7 @@ public:
   // Boot lockout/runtime threshold from the `shutdown_mv` preference.
   void setShutdownMilliVolts(uint16_t mv) override;
   bool pwrmgtBootCheck() override;
+  void lowVoltageShutdown() override;
 #endif
   NRF52Board(char *otaname) : ota_name(otaname) {}
   virtual void begin();
