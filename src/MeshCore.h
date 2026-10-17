@@ -98,9 +98,11 @@ public:
   virtual void setShutdownMilliVolts(uint16_t mv) { (void)mv; }
   // Boot lockout check. Returns false only if the board has powered itself off.
   virtual bool pwrmgtBootCheck() { return true; }
-  // Runtime low-voltage shutdown handler. Invoked when battery voltage is
-  // persistently below the configured threshold. Default falls back to powerOff().
-  virtual void lowVoltageShutdown() { powerOff(); }
+  // Runtime low-voltage shutdown, called when the battery stays below the
+  // configured threshold. Only a board that can wake itself again (nRF52 power
+  // management, ESP32 timed deep sleep) implements it: a plain power-off would
+  // leave a remote node dark for good once the cell recovers. Default: nothing.
+  virtual void lowVoltageShutdown() { }
 
   virtual bool handleCommand(const char* command, uint32_t sender_timestamp, char* reply) { return false; }
 

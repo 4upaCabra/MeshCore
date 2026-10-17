@@ -114,6 +114,12 @@ bool ESP32Board::pwrmgtBootCheck() {
   }
 
   uint16_t mv = getBattMilliVolts();
+  // Below 1 V the reading is wrong (no cell on USB power, ADC not ready): many
+  // ESP32 boards cannot report USB power, so this must not mean "flat".
+  if (mv < 1000) {
+    s_esp32_low_batt_slept = false;
+    return true;
+  }
   if (mv < threshold) {
     s_esp32_low_batt_slept = true;
     enterDeepSleep(LOWBATT_ESP32_SLEEP_S);
