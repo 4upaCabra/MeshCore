@@ -29,6 +29,17 @@
 
 #define POWER_MODE_MAX          POWER_MODE_AGGRESSIVE
 
+// Default battery shutdown threshold (mV), overridable per build. 0 = disabled.
+// A build flag outside 0 or 2000..4500 is sanitised back to 0, exactly like the
+// runtime value, so a typo cannot lock a node out at an unusable voltage.
+#ifndef SHUTDOWN_MV_DEFAULT
+#define SHUTDOWN_MV_DEFAULT 0
+#endif
+#if SHUTDOWN_MV_DEFAULT != 0 && (SHUTDOWN_MV_DEFAULT < 2000 || SHUTDOWN_MV_DEFAULT > 4500)
+#undef SHUTDOWN_MV_DEFAULT
+#define SHUTDOWN_MV_DEFAULT 0
+#endif
+
 // One prefs object for every role (companion, repeater, room server, sensor) —
 // upstream keeps two near-identical copies, we keep one. Persisted as JSON via
 // ConfigSerializer (see DataStore::savePrefs / CommonCLI::savePrefs); the old
@@ -100,7 +111,7 @@ public:
   // the runtime low-voltage shutdown. 0 = disabled (the default: opt-in, so a
   // LiFePO4/LTO/Na-ion node is never bricked by a Li-ion voltage). Valid range
   // is 0 or 2000..4500 mV.
-  uint16_t shutdown_mv = 0;
+  uint16_t shutdown_mv = SHUTDOWN_MV_DEFAULT;
   uint32_t discovery_mod_timestamp = 0;
   float    adc_multiplier = 0;
   char     owner_info[120];

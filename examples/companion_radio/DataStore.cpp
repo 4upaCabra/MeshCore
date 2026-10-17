@@ -251,6 +251,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs) {
 
     // migrate old fields
     _prefs.setRepeatEn(_prefs.client_repeat != 0);
+    _prefs.shutdown_mv = NodePrefs::sanitizeShutdownMv(_prefs.shutdown_mv);
 
     file.close();
   }
