@@ -6,7 +6,7 @@ This fork extends MeshCore's **companion radio** firmware with features for real
 
 ## What's different in south_edition
 
-**One firmware, three transports** — `_uni` builds support BLE, WiFi (TCP), and USB in a single binary. Switch at runtime via the Settings menu or CLI — no reflashing required.
+**One firmware, three transports** — `_ble` builds carry BLE and USB (plus WiFi on ESP32 boards with enough flash) in a single binary. Switch at runtime via the Settings menu or CLI — no reflashing required.
 
 **Companion CLI** — control the node remotely via PM (Remote CLI) or a dedicated TerminalCLI channel. Full command set: radio params, BLE PIN, WiFi networks, time sync, GPS, power management.
 
@@ -26,7 +26,7 @@ This fork extends MeshCore's **companion radio** firmware with features for real
 | `_companion_radio_usb` | USB only (kept from upstream) | ESP32 / NRF52 |
 | `_companion_radio_wifi` | WiFi only (kept from upstream) | ESP32 / ESP32-S3 |
 
-Pre-built binaries are attached to each [release tag](../../releases).
+Pre-built binaries are attached to each [release tag](../../releases). Step-by-step flashing guide (RU): [docs/flashing.md](docs/flashing.md).
 
 ## Resources
 
