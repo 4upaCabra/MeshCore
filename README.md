@@ -26,7 +26,7 @@ This fork extends MeshCore's **companion radio** firmware with features for real
 | `_companion_radio_usb` | USB only (kept from upstream) | ESP32 / NRF52 |
 | `_companion_radio_wifi` | WiFi only (kept from upstream) | ESP32 / ESP32-S3 |
 
-Pre-built binaries are attached to each [release tag](../../releases). Step-by-step flashing guide (RU): [docs/flashing.md](docs/flashing.md).
+Pre-built binaries are attached to each [release tag](../../releases). Step-by-step flashing guide (RU): [docs/flashing.md](docs/flashing.md). User guide (RU): [docs/user-guide.md](docs/user-guide.md).
 
 ## Resources
 
